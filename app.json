@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Caller Man",
+    "slug": "caller-man",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.callerman.app"
+    }
+  }
+}
