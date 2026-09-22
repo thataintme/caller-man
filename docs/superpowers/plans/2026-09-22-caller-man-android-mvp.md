@@ -44,6 +44,7 @@ package.json                      Deps + jest-expo config
 
 src/types/journey.ts              Journey, DefaultSettings, LocationFix types
 src/constants/limits.ts           Radius/frequency/battery/snooze bounds
+src/constants/mapbox.ts            Mapbox public access token (Task 28)
 
 src/geo/haversine.ts              Great-circle distance between two lat/lngs
 src/geo/radiusCap.ts              40%-of-distance radius cap
@@ -65,13 +66,15 @@ src/location/decideNextAction.ts  Pure: radius check + next interval + ETA (per 
 src/location/gpsWatchdog.ts       Pure staleness check + setInterval wiring
 src/location/backgroundTask.ts    TaskManager.defineTask glue (device-tested)
 src/location/locationService.ts   start/stop tracking, battery listener glue (device-tested)
+src/location/geocode.ts           Mapbox geocoding search (Task 28)
+src/location/offlineMapCache.ts   Mapbox offline pack cache/evict per journey (Task 30)
 
 src/alarm/alarmChannel.ts         notifee Android channel (bypassDnd, ALARM category)
 src/alarm/alarmManager.ts         triggerAlarm / triggerGpsLossAlert / triggerLowBatteryAlert
 
-src/navigation/types.ts           RootStackParamList
-src/navigation/resolveInitialRoute.ts  Pure: active journey → initial route
-src/navigation/RootNavigator.tsx  Stack navigator wiring all screens
+src/navigation/types.ts           RootStackParamList (Task 18)
+src/navigation/resolveInitialRoute.ts  Pure: active journey → initial route (Task 18)
+src/navigation/RootNavigator.tsx  Stack navigator wiring all screens (Task 27b, after all screens exist)
 
 src/components/SliderWithCustomInput.tsx  Reusable slider + custom-value toggle
 src/components/JourneyCard.tsx    Journey list card
@@ -1677,8 +1680,10 @@ git commit -m "Add pure radius-check and next-poll-interval decision logic"
 - Create: `src/location/gpsWatchdog.ts`, `src/location/gpsWatchdog.test.ts`
 
 **Interfaces:**
-- Consumes: `freqPerMinToIntervalMs` (Task 6), `Journey` (Task 3).
-- Produces: `evaluateStaleFix(journey, nowMs): boolean` (pure, tested), `startGpsWatchdog()`, `stopGpsWatchdog()` (glue, device-tested). Covers **Review Focus** item on GPS-loss alerting.
+- Consumes: `freqPerMinToIntervalMs` (Task 6), `Journey` (Task 3), `getDb` (Task 10), `getActiveJourney` (Task 11).
+- Produces: `evaluateStaleFix(journey, nowMs): boolean` (pure, tested), `startGpsWatchdog(onStale: (journey: Journey) => void)`, `stopGpsWatchdog()` (glue, device-tested). Covers **Review Focus** item on GPS-loss alerting.
+
+**Preflight note:** `startGpsWatchdog` takes the stale-fix callback as a parameter rather than importing `triggerGpsLossAlert` directly — Task 16 (`alarm/alarmManager`) doesn't exist yet at this point in the plan, and this task shouldn't depend forward on it. Task 17 wires the real callback in when it calls `startGpsWatchdog(triggerGpsLossAlert)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1726,7 +1731,6 @@ import { freqPerMinToIntervalMs } from '../geo/pollFrequency';
 import { Journey } from '../types/journey';
 import { getDb } from '../db/expoSqliteClient';
 import { getActiveJourney } from '../db/journeysRepo';
-import { triggerGpsLossAlert } from '../alarm/alarmManager';
 
 const CHECK_INTERVAL_MS = 30_000;
 let watchdogHandle: ReturnType<typeof setInterval> | null = null;
@@ -1738,13 +1742,13 @@ export function evaluateStaleFix(journey: Journey, nowMs: number): boolean {
   return nowMs - journey.lastFixAt > currentIntervalMs + graceMs;
 }
 
-export function startGpsWatchdog(): void {
+export function startGpsWatchdog(onStale: (journey: Journey) => void): void {
   if (watchdogHandle) return;
   watchdogHandle = setInterval(async () => {
     const db = await getDb();
     const journey = await getActiveJourney(db);
     if (journey && evaluateStaleFix(journey, Date.now())) {
-      await triggerGpsLossAlert(journey);
+      onStale(journey);
     }
   }, CHECK_INTERVAL_MS);
 }
@@ -2014,7 +2018,7 @@ import { Journey } from '../types/journey';
 import { LOCATION_TASK_NAME } from './taskName';
 import './backgroundTask'; // registers the task as a side effect
 import { startGpsWatchdog, stopGpsWatchdog } from './gpsWatchdog';
-import { triggerLowBatteryAlert } from '../alarm/alarmManager';
+import { triggerLowBatteryAlert, triggerGpsLossAlert } from '../alarm/alarmManager';
 import { freqPerMinToIntervalMs } from '../geo/pollFrequency';
 
 let batterySubscription: { remove: () => void } | null = null;
@@ -2037,7 +2041,7 @@ export async function startTracking(journey: Journey): Promise<void> {
     pausesUpdatesAutomatically: false,
   });
 
-  startGpsWatchdog();
+  startGpsWatchdog(triggerGpsLossAlert);
 
   batterySubscription = Battery.addBatteryLevelListener(({ batteryLevel }) => {
     const pct = Math.round(batteryLevel * 100);
@@ -2063,35 +2067,34 @@ export async function stopTracking(): Promise<void> {
 Run: `npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 5: Manual device verification**
+- [ ] **Step 5: Note the deferred manual device verification (do not attempt it yet)**
 
-Run: `npx expo run:android` on a physical device (background location behavior is unreliable on emulators).
+**Preflight note:** this task's device walkthrough genuinely cannot run yet — it needs the Welcome, New Journey, Current Journey, and Alarm screens (Tasks 21, 25, 26, 27) and the wired navigator/App entry (Task 27b), none of which exist at this point in the sequence. Task 17 completes on Step 4's type-check plus the unit tests from Tasks 14–15 that this task's glue code wraps (`decideNextAction`, `evaluateStaleFix`) — code review of the glue itself substitutes for a device run here. The full walkthrough below is the same one specified in "After Task 30" and only needs to be run once, there:
 
-1. Grant all permissions from the Welcome screen (built in Task 21).
-2. Start a journey (once Task 25 exists) with a nearby destination and a short min-poll interval.
+1. Grant all permissions from the Welcome screen.
+2. Start a journey with a nearby destination and a short min-poll interval.
 3. Background the app (press Home). Confirm the persistent "Caller Man — tracking active" notification appears.
 4. Walk/drive toward the destination; confirm the app is brought to the foreground with the full-screen alarm once within the radius.
 5. Enable airplane mode mid-journey; confirm a "Lost GPS signal" alert fires after `interval + grace period`.
-6. Note results in the task's commit message or a follow-up issue if any step fails — do not mark this task's manual verification done without actually running it on a device.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/location/taskName.ts src/location/backgroundTask.ts src/location/locationService.ts
-git commit -m "Add background location task and location service (device-verified)"
+git commit -m "Add background location task and location service (device walkthrough deferred to After Task 30)"
 ```
 
 ---
 
-### Task 18: Navigation — types, RootNavigator, resolveInitialRoute, App entry
+### Task 18: Navigation types + resolveInitialRoute
+
+**Preflight note:** the original draft of this task also built `RootNavigator.tsx` and `App.tsx` here, importing all seven screens (Tasks 21–27) before they existed — those screens themselves need `RootStackParamList` from this task, so the dependency only resolves one way. This task now produces only the type and the pure routing function; `RootNavigator`/`App.tsx` moved to **Task 27b**, dispatched after all seven screens exist.
 
 **Files:**
-- Create: `src/navigation/types.ts`, `src/navigation/resolveInitialRoute.ts`, `src/navigation/resolveInitialRoute.test.ts`, `src/navigation/RootNavigator.tsx`
-- Modify: `App.tsx`
+- Create: `src/navigation/types.ts`, `src/navigation/resolveInitialRoute.ts`, `src/navigation/resolveInitialRoute.test.ts`
 
 **Interfaces:**
-- Consumes: `getDb` (10), `runMigrations` (10), `getActiveJourney` (11), all screens (Tasks 21–27, created as stubs here and filled in by their own tasks).
-- Produces: `RootStackParamList`, `resolveInitialRoute(activeJourney): 'Journeys' | 'CurrentJourney'`, `RootNavigator`, wired `App.tsx`.
+- Produces: `RootStackParamList`, `resolveInitialRoute(activeJourney): 'Journeys' | 'CurrentJourney'` — consumed by every screen task (19–27, via `NativeStackScreenProps<RootStackParamList, '...'>`) and by Task 27b.
 
 - [ ] **Step 1: Write the failing test for the pure routing decision**
 
@@ -2145,89 +2148,11 @@ export function resolveInitialRoute(activeJourney: Journey | null): 'Journeys' |
 Run: `npx jest src/navigation/resolveInitialRoute.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Write `RootNavigator` (screens are created by later tasks; stub them minimally here so this compiles)**
-
-```tsx
-// src/navigation/RootNavigator.tsx
-import React from 'react';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { RootStackParamList } from './types';
-import { WelcomeScreen } from '../screens/WelcomeScreen';
-import { JourneysScreen } from '../screens/JourneysScreen';
-import { NewJourneyScreen } from '../screens/NewJourneyScreen';
-import { DefaultSettingsScreen } from '../screens/DefaultSettingsScreen';
-import { AboutScreen } from '../screens/AboutScreen';
-import { CurrentJourneyScreen } from '../screens/CurrentJourneyScreen';
-import { AlarmScreen } from '../screens/AlarmScreen';
-
-const Stack = createNativeStackNavigator<RootStackParamList>();
-
-export function RootNavigator({ initialRouteName }: { initialRouteName: keyof RootStackParamList }) {
-  return (
-    <Stack.Navigator initialRouteName={initialRouteName}>
-      <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="Journeys" component={JourneysScreen} options={{ title: 'Journeys' }} />
-      <Stack.Screen name="NewJourney" component={NewJourneyScreen} options={{ title: 'New Journey', presentation: 'modal' }} />
-      <Stack.Screen name="DefaultSettings" component={DefaultSettingsScreen} options={{ title: 'Default Settings' }} />
-      <Stack.Screen name="About" component={AboutScreen} options={{ title: 'About' }} />
-      <Stack.Screen name="CurrentJourney" component={CurrentJourneyScreen} options={{ title: 'Current Journey' }} />
-      <Stack.Screen name="Alarm" component={AlarmScreen} options={{ headerShown: false, presentation: 'fullScreenModal' }} />
-    </Stack.Navigator>
-  );
-}
-```
-
-Note: this file references all seven screens by their final import paths even though Tasks 21–27 haven't created them yet — implement Tasks 19–27 immediately after this one so the project compiles again. (If executing via `subagent-driven-development`, sequence Tasks 18 → 19 → 20 → 21…27 without merging in between, or create trivial placeholder-exporting files first; either way, no task here ships with a literal `TODO` component.)
-
-- [ ] **Step 6: Write `App.tsx`**
-
-```tsx
-// App.tsx
-import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import notifee, { EventType } from '@notifee/react-native';
-import { RootNavigator } from './src/navigation/RootNavigator';
-import { resolveInitialRoute } from './src/navigation/resolveInitialRoute';
-import { getDb } from './src/db/expoSqliteClient';
-import { runMigrations } from './src/db/migrations';
-import { getActiveJourney } from './src/db/journeysRepo';
-import { RootStackParamList } from './src/navigation/types';
-
-export default function App() {
-  const [initialRoute, setInitialRoute] = useState<keyof RootStackParamList | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      const db = await getDb();
-      await runMigrations(db);
-      const active = await getActiveJourney(db);
-      setInitialRoute(resolveInitialRoute(active));
-    })();
-
-    return notifee.onForegroundEvent(({ type, detail }) => {
-      if (type === EventType.ACTION_PRESS && detail.pressAction?.id === 'dismiss') {
-        notifee.cancelNotification(detail.notification?.id ?? '');
-      }
-    });
-  }, []);
-
-  if (initialRoute === null) {
-    return null;
-  }
-
-  return (
-    <NavigationContainer>
-      <RootNavigator initialRouteName={initialRoute} />
-    </NavigationContainer>
-  );
-}
-```
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/navigation/types.ts src/navigation/resolveInitialRoute.ts src/navigation/resolveInitialRoute.test.ts src/navigation/RootNavigator.tsx App.tsx
-git commit -m "Add navigation shell, cold-start routing, and app entry"
+git add src/navigation/types.ts src/navigation/resolveInitialRoute.ts src/navigation/resolveInitialRoute.test.ts
+git commit -m "Add navigation route types and cold-start routing decision"
 ```
 
 ---
@@ -3207,7 +3132,7 @@ git commit -m "Add New Journey setup screen with business-rule validation"
 - Create: `src/screens/CurrentJourneyScreen.tsx`, `src/screens/CurrentJourneyScreen.test.tsx`
 
 **Interfaces:**
-- Consumes: `getDb` (10), `getActiveJourney`/`finishJourney` (11), `getRecentFixes` (13), `haversineDistanceM` (4), `averageSpeedMps`/`estimateEta` (9), `stopTracking` (17).
+- Consumes: `getDb` (10), `getActiveJourney`/`finishJourney` (11), `getRecentFixes`/`pruneFixesForJourney` (13), `haversineDistanceM` (4), `averageSpeedMps`/`estimateEta` (9), `stopTracking` (17). Cancelling also prunes the journey's `location_log` rows (spec §6: pruned once the journey ends) — a gap caught in preflight review, since Task 13 defined `pruneFixesForJourney` but no task originally called it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3217,7 +3142,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import { CurrentJourneyScreen } from './CurrentJourneyScreen';
 import { getActiveJourney, finishJourney } from '../db/journeysRepo';
-import { getRecentFixes } from '../db/locationLogRepo';
+import { getRecentFixes, pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
 
 jest.mock('../db/expoSqliteClient', () => ({ getDb: jest.fn().mockResolvedValue({}) }));
@@ -3250,6 +3175,7 @@ test('cancelling the journey marks it cancelled, stops tracking, and navigates h
   fireEvent.press(getByText('Cancel Journey'));
 
   await waitFor(() => expect(finishJourney).toHaveBeenCalledWith(expect.anything(), 5, 'cancelled'));
+  expect(pruneFixesForJourney).toHaveBeenCalledWith(expect.anything(), 5);
   expect(stopTracking).toHaveBeenCalled();
   expect(navigation.replace).toHaveBeenCalledWith('Journeys');
 });
@@ -3272,7 +3198,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { getDb } from '../db/expoSqliteClient';
 import { getActiveJourney, finishJourney } from '../db/journeysRepo';
-import { getRecentFixes } from '../db/locationLogRepo';
+import { getRecentFixes, pruneFixesForJourney } from '../db/locationLogRepo';
 import { Journey } from '../types/journey';
 import { haversineDistanceM } from '../geo/haversine';
 import { averageSpeedMps, estimateEta } from '../geo/estimation';
@@ -3320,6 +3246,7 @@ export function CurrentJourneyScreen({ navigation }: Props) {
         onPress: async () => {
           const db = await getDb();
           await finishJourney(db, journey.id, 'cancelled');
+          await pruneFixesForJourney(db, journey.id);
           await stopTracking();
           navigation.replace('Journeys');
         },
@@ -3396,7 +3323,7 @@ git commit -m "Add Current Journey live-tracking screen"
 - Create: `src/screens/AlarmScreen.tsx`, `src/screens/AlarmScreen.test.tsx`
 
 **Interfaces:**
-- Consumes: `getDb` (10), `getJourneyById`/`finishJourney` (11), `stopTracking` (17), `triggerAlarm` (16).
+- Consumes: `getDb` (10), `getJourneyById`/`finishJourney` (11), `pruneFixesForJourney` (13), `stopTracking` (17), `triggerAlarm` (16). Dismissing an arrival also prunes the journey's `location_log` rows (spec §6; same preflight-caught gap as Task 26).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3405,10 +3332,12 @@ git commit -m "Add Current Journey live-tracking screen"
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { AlarmScreen } from './AlarmScreen';
 import { getJourneyById, finishJourney } from '../db/journeysRepo';
+import { pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
 
 jest.mock('../db/expoSqliteClient', () => ({ getDb: jest.fn().mockResolvedValue({}) }));
 jest.mock('../db/journeysRepo');
+jest.mock('../db/locationLogRepo');
 jest.mock('../location/locationService');
 jest.mock('@notifee/react-native', () => ({ stopForegroundService: jest.fn() }));
 
@@ -3428,6 +3357,7 @@ test('dismissing an arrival alarm completes the journey and stops tracking', asy
   fireEvent.press(getByText('Dismiss'));
 
   await waitFor(() => expect(finishJourney).toHaveBeenCalledWith(expect.anything(), 7, 'completed'));
+  expect(pruneFixesForJourney).toHaveBeenCalledWith(expect.anything(), 7);
   expect(stopTracking).toHaveBeenCalled();
   expect(navigation.replace).toHaveBeenCalledWith('Journeys');
 });
@@ -3462,6 +3392,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { getDb } from '../db/expoSqliteClient';
 import { getJourneyById, finishJourney } from '../db/journeysRepo';
+import { pruneFixesForJourney } from '../db/locationLogRepo';
 import { Journey } from '../types/journey';
 import { stopTracking } from '../location/locationService';
 import { triggerAlarm } from '../alarm/alarmManager';
@@ -3490,6 +3421,7 @@ export function AlarmScreen({ route, navigation }: Props) {
     if (kind === 'arrival') {
       const db = await getDb();
       await finishJourney(db, journeyId, 'completed');
+      await pruneFixesForJourney(db, journeyId);
       await stopTracking();
       navigation.replace('Journeys');
       return;
@@ -3543,6 +3475,108 @@ Expected: all tests across every task pass; no type errors.
 ```bash
 git add src/screens/AlarmScreen.tsx src/screens/AlarmScreen.test.tsx
 git commit -m "Add Alarm-fired screen with snooze/dismiss wiring"
+```
+
+---
+
+### Task 27b: Navigation shell — RootNavigator + App entry
+
+Moved here from the original Task 18 during preflight review (see Task 18's note): this task wires all seven screens together, so it can only run once they all exist.
+
+**Files:**
+- Create: `src/navigation/RootNavigator.tsx`
+- Modify: `App.tsx`
+
+**Interfaces:**
+- Consumes: `RootStackParamList`, `resolveInitialRoute` (18); `getDb`, `runMigrations` (10); `getActiveJourney` (11); `WelcomeScreen` (21), `JourneysScreen` (24), `NewJourneyScreen` (25), `DefaultSettingsScreen` (23), `AboutScreen` (22), `CurrentJourneyScreen` (26), `AlarmScreen` (27).
+- Produces: `RootNavigator`, a wired `App.tsx` that runs migrations, resolves the cold-start route, and registers notifee's foreground event listener.
+
+- [ ] **Step 1: Write `RootNavigator`**
+
+```tsx
+// src/navigation/RootNavigator.tsx
+import React from 'react';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { RootStackParamList } from './types';
+import { WelcomeScreen } from '../screens/WelcomeScreen';
+import { JourneysScreen } from '../screens/JourneysScreen';
+import { NewJourneyScreen } from '../screens/NewJourneyScreen';
+import { DefaultSettingsScreen } from '../screens/DefaultSettingsScreen';
+import { AboutScreen } from '../screens/AboutScreen';
+import { CurrentJourneyScreen } from '../screens/CurrentJourneyScreen';
+import { AlarmScreen } from '../screens/AlarmScreen';
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+export function RootNavigator({ initialRouteName }: { initialRouteName: keyof RootStackParamList }) {
+  return (
+    <Stack.Navigator initialRouteName={initialRouteName}>
+      <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="Journeys" component={JourneysScreen} options={{ title: 'Journeys' }} />
+      <Stack.Screen name="NewJourney" component={NewJourneyScreen} options={{ title: 'New Journey', presentation: 'modal' }} />
+      <Stack.Screen name="DefaultSettings" component={DefaultSettingsScreen} options={{ title: 'Default Settings' }} />
+      <Stack.Screen name="About" component={AboutScreen} options={{ title: 'About' }} />
+      <Stack.Screen name="CurrentJourney" component={CurrentJourneyScreen} options={{ title: 'Current Journey' }} />
+      <Stack.Screen name="Alarm" component={AlarmScreen} options={{ headerShown: false, presentation: 'fullScreenModal' }} />
+    </Stack.Navigator>
+  );
+}
+```
+
+- [ ] **Step 2: Write `App.tsx`**
+
+```tsx
+// App.tsx
+import React, { useEffect, useState } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import notifee, { EventType } from '@notifee/react-native';
+import { RootNavigator } from './src/navigation/RootNavigator';
+import { resolveInitialRoute } from './src/navigation/resolveInitialRoute';
+import { getDb } from './src/db/expoSqliteClient';
+import { runMigrations } from './src/db/migrations';
+import { getActiveJourney } from './src/db/journeysRepo';
+import { RootStackParamList } from './src/navigation/types';
+
+export default function App() {
+  const [initialRoute, setInitialRoute] = useState<keyof RootStackParamList | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const db = await getDb();
+      await runMigrations(db);
+      const active = await getActiveJourney(db);
+      setInitialRoute(resolveInitialRoute(active));
+    })();
+
+    return notifee.onForegroundEvent(({ type, detail }) => {
+      if (type === EventType.ACTION_PRESS && detail.pressAction?.id === 'dismiss') {
+        notifee.cancelNotification(detail.notification?.id ?? '');
+      }
+    });
+  }, []);
+
+  if (initialRoute === null) {
+    return null;
+  }
+
+  return (
+    <NavigationContainer>
+      <RootNavigator initialRouteName={initialRoute} />
+    </NavigationContainer>
+  );
+}
+```
+
+- [ ] **Step 3: Type-check and run the full suite**
+
+Run: `npx tsc --noEmit && npx jest`
+Expected: no type errors; every test across Tasks 1–27 still passes (this is the first point where the whole app compiles end to end).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/navigation/RootNavigator.tsx App.tsx
+git commit -m "Add navigation shell and wire app entry to all screens"
 ```
 
 ---
@@ -3764,7 +3798,9 @@ Self-review caught a second spec gap: spec §2 requires the app to "work with no
 
 **Files:**
 - Create: `src/location/offlineMapCache.ts`, `src/location/offlineMapCache.test.ts`
-- Modify: `src/screens/NewJourneyScreen.tsx` (cache the area when a journey starts), `src/screens/CurrentJourneyScreen.tsx` (evict the cache on cancel), `src/screens/AlarmScreen.tsx` (evict the cache on arrival dismiss)
+- Modify: `src/screens/NewJourneyScreen.tsx` + `.test.tsx` (cache the area when a journey starts), `src/screens/CurrentJourneyScreen.tsx` + `.test.tsx` (evict the cache on cancel), `src/screens/AlarmScreen.tsx` + `.test.tsx` (evict the cache on arrival dismiss)
+
+**Preflight note:** none of the three screens' existing tests mock `@rnmapbox/maps` with an `offlineManager` — two of them (`AlarmScreen.test.tsx`) don't mock `@rnmapbox/maps` at all. Wiring a real call to `cacheAreaForJourney`/`removeAreaCacheForJourney` into these screens without updating their tests would break already-passing tests (the mocked/absent `Mapbox.offlineManager` is `undefined`). Step 5a/6a/7a below add a direct `jest.mock('../location/offlineMapCache')` to each test file — simpler and more robust than shaping a fake `offlineManager`, and consistent with how every other cross-module dependency in this plan is mocked at the module boundary.
 
 **Interfaces:**
 - Consumes: `Journey` (Task 3).
@@ -3859,6 +3895,17 @@ In `handleStart`, immediately after `await startTracking(journey);` and before `
 await cacheAreaForJourney(journey, userLat, userLng);
 ```
 
+- [ ] **Step 5a: Mock the new dependency in `NewJourneyScreen.test.tsx`**
+
+Add near the other `jest.mock` calls:
+
+```tsx
+jest.mock('../location/offlineMapCache');
+```
+
+Run: `npx jest src/screens/NewJourneyScreen.test.tsx`
+Expected: PASS (3 tests — both original tests still pass now that `cacheAreaForJourney` is mocked rather than hitting the real, unmocked `@rnmapbox/maps` offline manager)
+
 - [ ] **Step 6: Wire eviction into `CurrentJourneyScreen`'s cancel handler**
 
 In `src/screens/CurrentJourneyScreen.tsx`, add the import:
@@ -3872,6 +3919,17 @@ In the `onPress` of the "Cancel journey" alert button, immediately after `await 
 ```tsx
 await removeAreaCacheForJourney(journey.id);
 ```
+
+- [ ] **Step 6a: Mock the new dependency in `CurrentJourneyScreen.test.tsx`**
+
+Add near the other `jest.mock` calls:
+
+```tsx
+jest.mock('../location/offlineMapCache');
+```
+
+Run: `npx jest src/screens/CurrentJourneyScreen.test.tsx`
+Expected: PASS (1 test)
 
 - [ ] **Step 7: Wire eviction into `AlarmScreen`'s arrival-dismiss handler**
 
@@ -3887,6 +3945,17 @@ In `handleDismiss`, inside the `if (kind === 'arrival')` block, immediately afte
 await removeAreaCacheForJourney(journeyId);
 ```
 
+- [ ] **Step 7a: Mock the new dependency in `AlarmScreen.test.tsx`**
+
+Add near the other `jest.mock` calls:
+
+```tsx
+jest.mock('../location/offlineMapCache');
+```
+
+Run: `npx jest src/screens/AlarmScreen.test.tsx`
+Expected: PASS (2 tests)
+
 - [ ] **Step 8: Run the full suite and type-check**
 
 Run: `npx jest && npx tsc --noEmit`
@@ -3896,7 +3965,9 @@ Expected: all tests pass, no type errors.
 
 ```bash
 git add src/location/offlineMapCache.ts src/location/offlineMapCache.test.ts \
-  src/screens/NewJourneyScreen.tsx src/screens/CurrentJourneyScreen.tsx src/screens/AlarmScreen.tsx
+  src/screens/NewJourneyScreen.tsx src/screens/NewJourneyScreen.test.tsx \
+  src/screens/CurrentJourneyScreen.tsx src/screens/CurrentJourneyScreen.test.tsx \
+  src/screens/AlarmScreen.tsx src/screens/AlarmScreen.test.tsx
 git commit -m "Add offline map caching for the active journey's area"
 ```
 
