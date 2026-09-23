@@ -6,7 +6,26 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "android": {
-      "package": "com.callerman.app"
-    }
+      "package": "com.callerman.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "USE_FULL_SCREEN_INTENT",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      "expo-location",
+      "expo-task-manager",
+      [
+        "@rnmapbox/maps",
+        { "RNMapboxMapsDownloadToken": "REPLACE_WITH_YOUR_MAPBOX_DOWNLOAD_TOKEN" }
+      ],
+      ["expo-build-properties", { "android": { "minSdkVersion": 26 } }]
+    ]
   }
 }
