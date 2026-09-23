@@ -9,8 +9,13 @@ const baseJourney: Journey = {
   createdAt: 0, completedAt: null,
 };
 
-test('no fix yet is not treated as stale (nothing to compare against)', () => {
-  expect(evaluateStaleFix({ ...baseJourney, lastFixAt: null }, 200_000)).toBe(false);
+test('no fix yet, within threshold of createdAt, is not stale', () => {
+  // min freq 5/min -> 12s interval; +2min grace = 132s threshold from createdAt (0)
+  expect(evaluateStaleFix({ ...baseJourney, lastFixAt: null }, 100_000)).toBe(false);
+});
+
+test('no fix yet, past threshold since createdAt, is stale', () => {
+  expect(evaluateStaleFix({ ...baseJourney, lastFixAt: null }, 132_000 + 1)).toBe(true);
 });
 
 test('a recent fix is not stale', () => {
