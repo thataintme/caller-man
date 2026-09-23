@@ -46,6 +46,8 @@ export async function runMigrations(db: Db): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_location_log_journey ON location_log(journey_id, recorded_at);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_journeys_one_active ON journeys(status) WHERE status = 'active';
+
     INSERT OR IGNORE INTO default_settings
       (id, radius_m, max_poll_freq, min_poll_freq, alarm_tune, battery_cutoff_pct, snooze_minutes, gps_loss_grace_minutes)
     VALUES (1, 10000, 20, 5, 'Radar Ping', 15, 3, 2);

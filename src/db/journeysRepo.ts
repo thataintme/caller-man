@@ -84,37 +84,44 @@ export async function createJourney(db: Db, input: CreateJourneyInput): Promise<
   }
 
   const now = Date.now();
-  const result = await db.runAsync(
-    `INSERT INTO journeys
-      (name, destination_lat, destination_lng, radius_m, max_poll_freq, min_poll_freq,
-       alarm_tune, battery_cutoff_pct, snooze_minutes, gps_loss_grace_minutes,
-       initial_distance_m, last_fix_at, status, created_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, NULL)`,
-    [
-      input.name,
-      input.destinationLat,
-      input.destinationLng,
-      input.radiusM,
-      input.maxPollFreqPerMin,
-      input.minPollFreqPerMin,
-      input.alarmTune,
-      input.batteryCutoffPct,
-      input.snoozeMinutes,
-      input.gpsLossGraceMinutes,
-      input.initialDistanceM,
-      now,
-    ]
-  );
+  try {
+    const result = await db.runAsync(
+      `INSERT INTO journeys
+        (name, destination_lat, destination_lng, radius_m, max_poll_freq, min_poll_freq,
+         alarm_tune, battery_cutoff_pct, snooze_minutes, gps_loss_grace_minutes,
+         initial_distance_m, last_fix_at, status, created_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, NULL)`,
+      [
+        input.name,
+        input.destinationLat,
+        input.destinationLng,
+        input.radiusM,
+        input.maxPollFreqPerMin,
+        input.minPollFreqPerMin,
+        input.alarmTune,
+        input.batteryCutoffPct,
+        input.snoozeMinutes,
+        input.gpsLossGraceMinutes,
+        input.initialDistanceM,
+        now,
+      ]
+    );
 
-  const created = await getJourneyById(db, result.lastInsertRowId);
-  if (!created) {
-    throw new Error('Failed to read back created journey');
+    const created = await getJourneyById(db, result.lastInsertRowId);
+    if (!created) {
+      throw new Error('Failed to read back created journey');
+    }
+    return created;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+      throw new ActiveJourneyExistsError();
+    }
+    throw error;
   }
-  return created;
 }
 
 export async function finishJourney(db: Db, id: number, status: 'completed' | 'cancelled'): Promise<void> {
-  await db.runAsync(`UPDATE journeys SET status = ?, completed_at = ? WHERE id = ?`, [status, Date.now(), id]);
+  await db.runAsync(`UPDATE journeys SET status = ?, completed_at = ? WHERE id = ? AND status = 'active'`, [status, Date.now(), id]);
 }
 
 export async function updateLastFixAt(db: Db, id: number, timestampMs: number): Promise<void> {

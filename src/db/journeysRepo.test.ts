@@ -79,3 +79,48 @@ test('updateLastFixAt persists the timestamp', async () => {
   const fetched = await getJourneyById(db, journey.id);
   expect(fetched?.lastFixAt).toBe(123456);
 });
+
+test('concurrent createJourney calls enforce single active via UNIQUE constraint', async () => {
+  const db = await setup();
+  const results = await Promise.allSettled([
+    createJourney(db, baseInput),
+    createJourney(db, baseInput),
+  ]);
+
+  const fulfilled = results.filter((r) => r.status === 'fulfilled');
+  const rejected = results.filter((r) => r.status === 'rejected');
+
+  expect(fulfilled).toHaveLength(1);
+  expect(rejected).toHaveLength(1);
+  expect(rejected[0].status).toBe('rejected');
+  if (rejected[0].status === 'rejected') {
+    expect(rejected[0].reason).toBeInstanceOf(ActiveJourneyExistsError);
+  }
+
+  const active = await getActiveJourney(db);
+  expect(active).not.toBeNull();
+  const allJourneys = await listJourneys(db);
+  const activeCount = allJourneys.filter((j) => j.status === 'active').length;
+  expect(activeCount).toBe(1);
+});
+
+test('finishJourney does not re-finish an already finished journey', async () => {
+  const db = await setup();
+  const journey = await createJourney(db, baseInput);
+  const beforeFirstFinish = Date.now();
+  await finishJourney(db, journey.id, 'completed');
+  const firstFinish = await getJourneyById(db, journey.id);
+  expect(firstFinish?.status).toBe('completed');
+  const firstCompletedAt = firstFinish?.completedAt;
+
+  // Wait a tiny bit to ensure timestamps would differ if the update occurred
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // Try to finish again with a different status
+  await finishJourney(db, journey.id, 'cancelled');
+  const afterSecondFinish = await getJourneyById(db, journey.id);
+
+  // Should still be 'completed' and completedAt should be unchanged
+  expect(afterSecondFinish?.status).toBe('completed');
+  expect(afterSecondFinish?.completedAt).toBe(firstCompletedAt);
+});
