@@ -1,4 +1,5 @@
 import { decideNextAction } from './decideNextAction';
+import { haversineDistanceM } from '../geo/haversine';
 import { Journey } from '../types/journey';
 
 const baseJourney: Journey = {
@@ -38,6 +39,20 @@ test('a fix close to the destination continues at close to the maximum frequency
     expect(action.nextIntervalMs).toBeLessThan(12_000);
     expect(action.nextIntervalMs).toBeGreaterThanOrEqual(3_000); // 60000 / 20/min
   }
+});
+
+test('the radius boundary is inclusive: exactly at radiusM triggers the alarm, one meter further continues', () => {
+  const fix = { lat: 0.001, lng: 0, speedMps: 0, accuracyM: 5, recordedAt: 1000 };
+  const distanceM = haversineDistanceM(
+    { lat: fix.lat, lng: fix.lng },
+    { lat: baseJourney.destinationLat, lng: baseJourney.destinationLng }
+  );
+
+  const journeyAtBoundary: Journey = { ...baseJourney, radiusM: distanceM };
+  expect(decideNextAction(journeyAtBoundary, fix, [])).toEqual({ type: 'alarm' });
+
+  const journeyJustOutside: Journey = { ...baseJourney, radiusM: distanceM - 1 };
+  expect(decideNextAction(journeyJustOutside, fix, []).type).toBe('continue');
 });
 
 test('includes a null ETA when there is not yet enough estimation data', () => {
