@@ -1,0 +1,11 @@
+export const RADIUS_MIN_M = 5_000;
+export const RADIUS_MAX_M = 200_000;
+export const RADIUS_MAX_FRACTION_OF_DISTANCE = 0.4;
+export const POLL_FREQ_MIN_PER_MIN = 1;
+export const POLL_FREQ_MAX_PER_MIN = 200;
+export const BATTERY_CUTOFF_SAFETY_MARGIN_PCT = 5;
+export const BATTERY_CUTOFF_FLOOR_PCT = 0;
+export const SNOOZE_MINUTES_MIN = 1;
+export const SNOOZE_MINUTES_MAX = 15;
+export const GPS_LOSS_GRACE_MINUTES_MIN = 1;
+export const GPS_LOSS_GRACE_MINUTES_MAX = 30;
