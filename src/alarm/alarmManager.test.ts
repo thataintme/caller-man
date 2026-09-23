@@ -20,30 +20,54 @@ const journey: Journey = {
 
 beforeEach(() => jest.clearAllMocks());
 
+const SNOOZE_DISMISS_ACTIONS = [
+  { title: 'Snooze', pressAction: { id: 'snooze' } },
+  { title: 'Dismiss', pressAction: { id: 'dismiss' } },
+];
+
 test('triggerAlarm displays a full-screen, DND-bypassing ALARM-category notification', async () => {
   await triggerAlarm(journey);
   expect(notifee.createChannel).toHaveBeenCalledWith(expect.objectContaining({ bypassDnd: true }));
   expect(notifee.displayNotification).toHaveBeenCalledWith(
     expect.objectContaining({
+      id: 'arrival-1',
       android: expect.objectContaining({
         category: 'alarm',
         fullScreenAction: { id: 'default' },
         loopSound: true,
+        pressAction: { id: 'default' },
+        actions: SNOOZE_DISMISS_ACTIONS,
       }),
     })
   );
 });
 
-test('triggerGpsLossAlert displays a full-screen alert with GPS-loss messaging', async () => {
+test('triggerGpsLossAlert displays a full-screen, looping alert with GPS-loss messaging', async () => {
   await triggerGpsLossAlert(journey);
   expect(notifee.displayNotification).toHaveBeenCalledWith(
-    expect.objectContaining({ title: 'Lost GPS signal' })
+    expect.objectContaining({
+      id: 'gps-loss-1',
+      title: 'Lost GPS signal',
+      android: expect.objectContaining({
+        loopSound: true,
+        pressAction: { id: 'default' },
+        actions: SNOOZE_DISMISS_ACTIONS,
+      }),
+    })
   );
 });
 
-test('triggerLowBatteryAlert displays a full-screen alert with low-battery messaging', async () => {
+test('triggerLowBatteryAlert displays a full-screen, looping alert with low-battery messaging', async () => {
   await triggerLowBatteryAlert(journey);
   expect(notifee.displayNotification).toHaveBeenCalledWith(
-    expect.objectContaining({ title: 'Battery running low' })
+    expect.objectContaining({
+      id: 'low-battery-1',
+      title: 'Battery running low',
+      android: expect.objectContaining({
+        loopSound: true,
+        pressAction: { id: 'default' },
+        actions: SNOOZE_DISMISS_ACTIONS,
+      }),
+    })
   );
 });
