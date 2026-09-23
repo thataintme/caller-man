@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Switch, StyleSheet } from 'react-native';
 import Slider from '@react-native-community/slider';
 
@@ -12,9 +12,22 @@ interface Props {
   onChange: (value: number) => void;
 }
 
+function parseCustomValue(text: string): number {
+  return Number(text.replace(',', '.'));
+}
+
 export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, onChange }: Props) {
   const [useCustom, setUseCustom] = useState(false);
   const [customText, setCustomText] = useState(String(value));
+
+  useEffect(() => {
+    if (parseCustomValue(customText) !== value) {
+      setCustomText(String(value));
+    }
+    // Only resync when the parent-provided value changes; an in-progress edit
+    // (e.g. "12.") must not be clobbered by re-renders triggered by other props.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   return (
     <View style={styles.container}>
@@ -33,7 +46,7 @@ export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, 
           value={customText}
           onChangeText={(text) => {
             setCustomText(text);
-            const parsed = Number(text);
+            const parsed = parseCustomValue(text);
             if (Number.isFinite(parsed) && parsed > 0) {
               onChange(parsed);
             }
