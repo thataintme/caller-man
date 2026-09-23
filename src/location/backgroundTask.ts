@@ -69,8 +69,15 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const action = decideNextAction(journey, fix, recent);
 
     if (action.type === 'alarm') {
-      await markArrived(db, journey.id, fix.recordedAt);
+      // Fire the alarm before persisting arrival: if triggerAlarm throws
+      // (e.g. a notification channel/permission failure), we must not mark
+      // arrived, or the next fix would early-return above and the watchdog
+      // would treat the journey as arrived — silently and permanently
+      // losing the alarm. triggerAlarm uses the stable notification id
+      // `arrival-${journey.id}`, so a retry on the next fix just updates
+      // the same notification rather than stacking duplicates.
       await triggerAlarm(journey);
+      await markArrived(db, journey.id, fix.recordedAt);
       await stopLocationUpdatesIfStarted();
       return;
     }
