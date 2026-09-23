@@ -20,7 +20,8 @@ export async function runMigrations(db: Db): Promise<void> {
       last_fix_at INTEGER,
       status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'cancelled')),
       created_at INTEGER NOT NULL,
-      completed_at INTEGER
+      completed_at INTEGER,
+      arrived_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS default_settings (

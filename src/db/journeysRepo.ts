@@ -18,6 +18,7 @@ interface JourneyRow {
   status: JourneyStatus;
   created_at: number;
   completed_at: number | null;
+  arrived_at: number | null;
 }
 
 function rowToJourney(row: JourneyRow): Journey {
@@ -38,6 +39,7 @@ function rowToJourney(row: JourneyRow): Journey {
     status: row.status,
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    arrivedAt: row.arrived_at,
   };
 }
 
@@ -89,8 +91,8 @@ export async function createJourney(db: Db, input: CreateJourneyInput): Promise<
       `INSERT INTO journeys
         (name, destination_lat, destination_lng, radius_m, max_poll_freq, min_poll_freq,
          alarm_tune, battery_cutoff_pct, snooze_minutes, gps_loss_grace_minutes,
-         initial_distance_m, last_fix_at, status, created_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, NULL)`,
+         initial_distance_m, last_fix_at, status, created_at, completed_at, arrived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, NULL, NULL)`,
       [
         input.name,
         input.destinationLat,
@@ -126,4 +128,11 @@ export async function finishJourney(db: Db, id: number, status: 'completed' | 'c
 
 export async function updateLastFixAt(db: Db, id: number, timestampMs: number): Promise<void> {
   await db.runAsync(`UPDATE journeys SET last_fix_at = ? WHERE id = ?`, [timestampMs, id]);
+}
+
+export async function markArrived(db: Db, id: number, timestampMs: number): Promise<void> {
+  await db.runAsync(
+    `UPDATE journeys SET arrived_at = ? WHERE id = ? AND status = 'active' AND arrived_at IS NULL`,
+    [timestampMs, id]
+  );
 }

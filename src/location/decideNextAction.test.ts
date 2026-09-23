@@ -7,7 +7,7 @@ const baseJourney: Journey = {
   maxPollFreqPerMin: 20, minPollFreqPerMin: 5, alarmTune: 'Radar Ping',
   batteryCutoffPct: 15, snoozeMinutes: 3, gpsLossGraceMinutes: 2,
   initialDistanceM: 10_000, lastFixAt: null, status: 'active',
-  createdAt: 0, completedAt: null,
+  createdAt: 0, completedAt: null, arrivedAt: null,
 };
 
 test('a fix inside the radius triggers the alarm', () => {

@@ -2,10 +2,31 @@ import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import { LOCATION_TASK_NAME } from './taskName';
 import { getDb } from '../db/expoSqliteClient';
-import { getActiveJourney, updateLastFixAt } from '../db/journeysRepo';
+import { getActiveJourney, updateLastFixAt, markArrived } from '../db/journeysRepo';
 import { insertFix, getRecentFixes } from '../db/locationLogRepo';
 import { decideNextAction } from './decideNextAction';
 import { triggerAlarm } from '../alarm/alarmManager';
+
+// Only re-register location updates when the new poll interval differs from
+// the one currently applied by at least this fraction, to avoid restarting
+// the OS-level location subscription on every single fix.
+const RESCHEDULE_THRESHOLD_RATIO = 0.1;
+
+// Module-level so both the background task's own reschedules and
+// locationService.startTracking's initial registration share one source of
+// truth for "what interval is currently applied".
+let lastAppliedIntervalMs: number | null = null;
+
+export function setLastAppliedIntervalMs(ms: number): void {
+  lastAppliedIntervalMs = ms;
+}
+
+async function stopLocationUpdatesIfStarted(): Promise<void> {
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+  if (started) {
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+  }
+}
 
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
@@ -20,7 +41,19 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 
     const db = await getDb();
     const journey = await getActiveJourney(db);
-    if (!journey) return;
+    if (!journey) {
+      // The journey was cancelled/finished elsewhere; don't leave the
+      // foreground service (and its notification) running for nothing.
+      await stopLocationUpdatesIfStarted();
+      return;
+    }
+
+    if (journey.arrivedAt !== null) {
+      // Arrival was already recorded (e.g. a leftover fix arrived after we
+      // already alarmed and tried to stop). Don't re-fire; just tear down.
+      await stopLocationUpdatesIfStarted();
+      return;
+    }
 
     const fix = {
       lat: latest.coords.latitude,
@@ -36,19 +69,38 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const action = decideNextAction(journey, fix, recent);
 
     if (action.type === 'alarm') {
+      await markArrived(db, journey.id, fix.recordedAt);
       await triggerAlarm(journey);
+      await stopLocationUpdatesIfStarted();
       return;
     }
 
-    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: action.nextIntervalMs,
-      foregroundService: {
-        notificationTitle: 'Caller Man — tracking active',
-        notificationBody: `Heading to ${journey.name}`,
-      },
-      pausesUpdatesAutomatically: false,
-    });
+    // Re-read the active journey right before rescheduling: the journey may
+    // have been cancelled/finished, or arrived via another path, while the
+    // awaits above were in flight. Only reschedule if it's still the same,
+    // still-unarrived journey.
+    const stillActive = await getActiveJourney(db);
+    if (!stillActive || stillActive.id !== journey.id || stillActive.arrivedAt !== null) {
+      await stopLocationUpdatesIfStarted();
+      return;
+    }
+
+    const shouldReschedule =
+      lastAppliedIntervalMs === null ||
+      Math.abs(action.nextIntervalMs - lastAppliedIntervalMs) / lastAppliedIntervalMs >= RESCHEDULE_THRESHOLD_RATIO;
+
+    if (shouldReschedule) {
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: action.nextIntervalMs,
+        foregroundService: {
+          notificationTitle: 'Caller Man — tracking active',
+          notificationBody: `Heading to ${journey.name}`,
+        },
+        pausesUpdatesAutomatically: false,
+      });
+      lastAppliedIntervalMs = action.nextIntervalMs;
+    }
   } catch (taskError) {
     console.error('Location task failed', taskError);
   }

@@ -7,6 +7,7 @@ const CHECK_INTERVAL_MS = 30_000;
 let watchdogHandle: ReturnType<typeof setInterval> | null = null;
 
 export function evaluateStaleFix(journey: Journey, nowMs: number): boolean {
+  if (journey.arrivedAt !== null) return false;
   const referenceAt = journey.lastFixAt ?? journey.createdAt;
   const currentIntervalMs = freqPerMinToIntervalMs(journey.minPollFreqPerMin);
   const graceMs = journey.gpsLossGraceMinutes * 60_000;

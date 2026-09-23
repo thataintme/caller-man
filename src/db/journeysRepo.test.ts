@@ -7,6 +7,7 @@ import {
   listJourneys,
   finishJourney,
   updateLastFixAt,
+  markArrived,
   ActiveJourneyExistsError,
 } from './journeysRepo';
 
@@ -123,4 +124,29 @@ test('finishJourney does not re-finish an already finished journey', async () =>
   // Should still be 'completed' and completedAt should be unchanged
   expect(afterSecondFinish?.status).toBe('completed');
   expect(afterSecondFinish?.completedAt).toBe(firstCompletedAt);
+});
+
+test('markArrived sets arrivedAt on an active journey, once', async () => {
+  const db = await setup();
+  const journey = await createJourney(db, baseInput);
+  expect(journey.arrivedAt).toBeNull();
+
+  await markArrived(db, journey.id, 999);
+  const afterFirst = await getJourneyById(db, journey.id);
+  expect(afterFirst?.arrivedAt).toBe(999);
+
+  // A second call with a different timestamp must not overwrite the first arrival.
+  await markArrived(db, journey.id, 1000);
+  const afterSecond = await getJourneyById(db, journey.id);
+  expect(afterSecond?.arrivedAt).toBe(999);
+});
+
+test('markArrived does not set arrivedAt on a finished journey', async () => {
+  const db = await setup();
+  const journey = await createJourney(db, baseInput);
+  await finishJourney(db, journey.id, 'completed');
+
+  await markArrived(db, journey.id, 999);
+  const fetched = await getJourneyById(db, journey.id);
+  expect(fetched?.arrivedAt).toBeNull();
 });

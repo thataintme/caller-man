@@ -17,6 +17,7 @@ export interface Journey {
   status: JourneyStatus;
   createdAt: number;
   completedAt: number | null;
+  arrivedAt: number | null;
 }
 
 export interface DefaultSettings {

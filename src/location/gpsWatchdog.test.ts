@@ -6,7 +6,7 @@ const baseJourney: Journey = {
   maxPollFreqPerMin: 20, minPollFreqPerMin: 5, alarmTune: 'Radar Ping',
   batteryCutoffPct: 15, snoozeMinutes: 3, gpsLossGraceMinutes: 2,
   initialDistanceM: 10_000, lastFixAt: 100_000, status: 'active',
-  createdAt: 0, completedAt: null,
+  createdAt: 0, completedAt: null, arrivedAt: null,
 };
 
 test('no fix yet, within threshold of createdAt, is not stale', () => {
@@ -29,4 +29,10 @@ test('a fix older than interval + grace period is stale', () => {
 
 test('exactly at the threshold is not yet stale', () => {
   expect(evaluateStaleFix(baseJourney, 100_000 + 132_000)).toBe(false);
+});
+
+test('an arrived journey is never stale, no matter how old the last fix is', () => {
+  const arrived = { ...baseJourney, arrivedAt: 100_000 };
+  expect(evaluateStaleFix(arrived, 100_000 + 132_000 + 1)).toBe(false);
+  expect(evaluateStaleFix({ ...arrived, lastFixAt: null }, 10_000_000)).toBe(false);
 });
