@@ -15,7 +15,7 @@ export function JourneyCard({ journey, onPress }: Props) {
         <Text style={styles.status}>{journey.status}</Text>
       </View>
       <Text style={styles.meta}>
-        Radius {(journey.radiusM / 1000).toFixed(1)} km · {new Date(journey.createdAt).toLocaleDateString()}
+        Radius {(journey.radiusM / 1000).toFixed(1)} km · {(journey.initialDistanceM / 1000).toFixed(1)} km away · {new Date(journey.createdAt).toLocaleDateString()}
       </Text>
     </Pressable>
   );

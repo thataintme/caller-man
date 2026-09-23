@@ -21,3 +21,9 @@ test('pressing the card calls onPress with the journey', () => {
   fireEvent.press(getByText('Train Station'));
   expect(onPress).toHaveBeenCalledWith(journey);
 });
+
+test('displays radius and distance correctly', () => {
+  const { getByText } = render(<JourneyCard journey={journey} onPress={jest.fn()} />);
+  expect(getByText(/Radius 1\.0 km/)).toBeTruthy();
+  expect(getByText(/5\.0 km away/)).toBeTruthy();
+});
