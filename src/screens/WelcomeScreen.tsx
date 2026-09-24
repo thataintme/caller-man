@@ -52,23 +52,43 @@ export function WelcomeScreen({ navigation }: Props) {
   const [requesting, setRequesting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const navigatedRef = useRef(false);
+  const mountedRef = useRef(true);
 
   // Android 11+ often can't grant "Allow all the time" from the in-app dialog, so a
   // denial here isn't necessarily final — offer a way to Settings and keep checking.
   const locationBlocked = hasRequested && (!granted.gps || !granted.background);
   const optionalDenied = hasRequested ? OPTIONAL_SWITCH_KEYS.filter((key) => !granted[key]) : [];
 
+  // Single choke point for navigating to Journeys: the request path and the
+  // AppState re-check path can both independently resolve "granted" (e.g. two
+  // 'active' events, or a resume racing the in-flight request), so the
+  // check-and-set here must happen with no `await` between them — only the
+  // first caller to reach this synchronous block wins.
+  function navigateOnce() {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    navigation.replace('Journeys');
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (state) => {
       if (state !== 'active' || navigatedRef.current) return;
       try {
         const fg = await Location.getForegroundPermissionsAsync();
+        if (!mountedRef.current) return;
         const bg = await Location.getBackgroundPermissionsAsync();
+        if (!mountedRef.current) return;
         if (fg.granted && bg.granted) {
           setGranted((g) => ({ ...g, gps: true, background: true, toggleGps: true }));
           setHasRequested(true);
-          navigatedRef.current = true;
-          navigation.replace('Journeys');
+          navigateOnce();
         }
       } catch {
         // Best-effort re-check; the user can still retry via the button.
@@ -85,6 +105,7 @@ export function WelcomeScreen({ navigation }: Props) {
       const fg = await Location.requestForegroundPermissionsAsync();
       const bg = await Location.requestBackgroundPermissionsAsync();
       const settings = await notifee.requestPermission(); // also covers POST_NOTIFICATIONS
+      if (!mountedRef.current) return;
 
       const next: Record<SwitchPermissionKey, boolean> = {
         gps: fg.granted,
@@ -96,13 +117,16 @@ export function WelcomeScreen({ navigation }: Props) {
       setHasRequested(true);
 
       if (next.gps && next.background) {
-        navigatedRef.current = true;
-        navigation.replace('Journeys');
+        navigateOnce();
       }
     } catch {
-      setErrorMessage('Something went wrong while requesting permissions. Please try again.');
+      if (mountedRef.current) {
+        setErrorMessage('Something went wrong while requesting permissions. Please try again.');
+      }
     } finally {
-      setRequesting(false);
+      if (mountedRef.current) {
+        setRequesting(false);
+      }
     }
   }
 
@@ -156,10 +180,11 @@ export function WelcomeScreen({ navigation }: Props) {
 
       <View style={styles.row}>
         <View style={styles.rowTextWrap}>
-          <Text style={styles.rowLabel}>Display Over Other Apps</Text>
+          <Text style={styles.rowLabel}>Full-screen Alarm</Text>
           <Text style={styles.rationale}>
-            Lets the arrival alarm show full-screen even when your phone is locked. Android doesn't
-            let apps check or request this automatically — please enable it yourself.
+            Lets the arrival alarm launch full-screen and wake your device, even while it's locked.
+            Android doesn't let apps check or request this automatically — please enable it
+            yourself.
           </Text>
         </View>
         <Pressable
