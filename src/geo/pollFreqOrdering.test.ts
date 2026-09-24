@@ -41,6 +41,22 @@ test('equal min/max values (changed max) reconcile to a valid ascending pair', (
   expect(reconcileMinMaxFreq('max', 10, 10)).toEqual({ minFreqPerMin: 9, maxFreqPerMin: 10 });
 });
 
+test('a fractional min at the top limit (199.5) does not push max past 200', () => {
+  expect(reconcileMinMaxFreq('min', 199.5, 199.5)).toEqual({ minFreqPerMin: 199, maxFreqPerMin: 200 });
+});
+
+test('a fractional min just under the top limit (199.99) does not push max past 200', () => {
+  expect(reconcileMinMaxFreq('min', 199.99, 150)).toEqual({ minFreqPerMin: 199, maxFreqPerMin: 200 });
+});
+
+test('a fractional max (1.4) does not push min below 1', () => {
+  expect(reconcileMinMaxFreq('max', 2, 1.4)).toEqual({ minFreqPerMin: 1, maxFreqPerMin: 2 });
+});
+
+test('a fractional max just above the bottom limit (1.01) does not push min below 1', () => {
+  expect(reconcileMinMaxFreq('max', 5, 1.01)).toEqual({ minFreqPerMin: 1, maxFreqPerMin: 2 });
+});
+
 test('result is always within [POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN] with max > min', () => {
   const cases: Array<['min' | 'max', number, number]> = [
     ['min', 0, 0],
@@ -51,6 +67,12 @@ test('result is always within [POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN] wit
     ['max', 1, 1],
     ['min', -5, 20],
     ['max', 20, -5],
+    ['min', 199.5, 199.5],
+    ['min', 199.99, 150],
+    ['max', 2, 1.4],
+    ['max', 5, 1.01],
+    ['min', 199.01, 199.01],
+    ['max', 1.99, 1.99],
   ];
   for (const [changed, min, max] of cases) {
     const result = reconcileMinMaxFreq(changed, min, max);
