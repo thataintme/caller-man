@@ -10,13 +10,14 @@ interface Props {
   max: number;
   step?: number;
   onChange: (value: number) => void;
+  testID?: string;
 }
 
 function parseCustomValue(text: string): number {
   return Number(text.replace(',', '.'));
 }
 
-export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, onChange }: Props) {
+export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, onChange, testID }: Props) {
   const [useCustom, setUseCustom] = useState(false);
   const [customText, setCustomText] = useState(String(value));
 
@@ -29,13 +30,20 @@ export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
+  function commitCustomValue() {
+    const parsed = parseCustomValue(customText);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      onChange(parsed);
+    }
+  }
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID={testID}>
       <View style={styles.header}>
         <Text style={styles.label}>{label}</Text>
         <View style={styles.customToggle}>
           <Text style={styles.customLabel}>Custom</Text>
-          <Switch value={useCustom} onValueChange={setUseCustom} />
+          <Switch value={useCustom} onValueChange={setUseCustom} testID={testID ? `${testID}-switch` : undefined} />
         </View>
       </View>
 
@@ -44,13 +52,10 @@ export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, 
           style={styles.input}
           keyboardType="numeric"
           value={customText}
-          onChangeText={(text) => {
-            setCustomText(text);
-            const parsed = parseCustomValue(text);
-            if (Number.isFinite(parsed) && parsed > 0) {
-              onChange(parsed);
-            }
-          }}
+          onChangeText={setCustomText}
+          onEndEditing={commitCustomValue}
+          onSubmitEditing={commitCustomValue}
+          testID={testID ? `${testID}-input` : undefined}
         />
       ) : (
         <>

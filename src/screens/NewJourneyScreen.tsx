@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import * as Battery from 'expo-battery';
+import * as Location from 'expo-location';
 import Mapbox from '@rnmapbox/maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
@@ -13,18 +14,32 @@ import { haversineDistanceM } from '../geo/haversine';
 import { clampRadiusToCap, maxAllowedRadiusM } from '../geo/radiusCap';
 import { reconcileMinMaxFreq } from '../geo/pollFreqOrdering';
 import { maxAllowedBatteryCutoffPct } from '../geo/batteryCutoff';
-import { startTracking } from '../location/locationService';
+import { startTracking, stopTracking } from '../location/locationService';
 import { RADIUS_MIN_M, RADIUS_MAX_M, POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN } from '../constants/limits';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'NewJourney'>;
 
-// Placeholder "current location" until a live-GPS fetch is wired up (not in
-// this task's scope — see interfaces list); destination defaults to a
-// distinct nearby point so the initial radius cap isn't degenerately zero.
-const PLACEHOLDER_USER_LAT = 51.5074;
-const PLACEHOLDER_USER_LNG = -0.1278;
+// Destination placeholder until search (Tasks 28-29) lets the user pick one
+// directly; kept distinct from any real "current location" so the initial
+// radius cap isn't degenerately zero. The user's actual position is fetched
+// live below (getCurrentPositionAsync) — no placeholder for that.
 const PLACEHOLDER_DEST_LAT = 51.7774;
 const PLACEHOLDER_DEST_LNG = -0.1278;
+
+// §5.3/§8.5: below the configured default cutoff, the max selectable cutoff
+// for this journey is capped at (current battery - 5%); otherwise there's no
+// extra cap beyond 100%. An unknown battery level (the native "unknown"
+// sentinel, or a failed read) is treated the same as "not below the
+// default" — no cap, use the configured default as-is.
+function batteryCutoffCap(currentBatteryPct: number, defaultCutoffPct: number): number {
+  if (currentBatteryPct < 0 || currentBatteryPct >= defaultCutoffPct) return 100;
+  return maxAllowedBatteryCutoffPct(currentBatteryPct, defaultCutoffPct);
+}
+
+function parseCoordinate(text: string): number | null {
+  const n = Number(text.replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
 
 export function NewJourneyScreen({ navigation }: Props) {
   const [defaults, setDefaults] = useState<DefaultSettings | null>(null);
@@ -36,37 +51,67 @@ export function NewJourneyScreen({ navigation }: Props) {
   const [name, setName] = useState('New Journey');
   const [destLat, setDestLat] = useState(PLACEHOLDER_DEST_LAT);
   const [destLng, setDestLng] = useState(PLACEHOLDER_DEST_LNG);
-  const [userLat] = useState(PLACEHOLDER_USER_LAT);
-  const [userLng] = useState(PLACEHOLDER_USER_LNG);
+  // Local text state for the coordinate fields: committed to destLat/destLng
+  // (and therefore to the radius-cap recalculation) only on blur/submit, so
+  // in-progress typing of negatives and decimals isn't clobbered or
+  // prematurely rejected keystroke-by-keystroke.
+  const [destLatText, setDestLatText] = useState(String(PLACEHOLDER_DEST_LAT));
+  const [destLngText, setDestLngText] = useState(String(PLACEHOLDER_DEST_LNG));
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
   const [radiusM, setRadiusM] = useState(0);
   const [maxFreq, setMaxFreq] = useState(0);
   const [minFreq, setMinFreq] = useState(0);
   const [alarmTune, setAlarmTune] = useState('');
   const [batteryCutoff, setBatteryCutoff] = useState(0);
-  const [currentBatteryPct, setCurrentBatteryPct] = useState(100);
+  const [currentBatteryPct, setCurrentBatteryPct] = useState(-1);
+
+  useEffect(() => {
+    setDestLatText(String(destLat));
+  }, [destLat]);
+  useEffect(() => {
+    setDestLngText(String(destLng));
+  }, [destLng]);
 
   async function loadSetupData() {
     setLoadError(null);
     try {
       const db = await getDb();
-      const [d, active] = await Promise.all([getDefaultSettings(db), getActiveJourney(db)]);
+      const [position, d, active] = await Promise.all([
+        Location.getCurrentPositionAsync(),
+        getDefaultSettings(db),
+        getActiveJourney(db),
+      ]);
 
-      setDefaults(d);
+      const uLat = position.coords.latitude;
+      const uLng = position.coords.longitude;
+
       setActiveJourneyBlocked(!!active);
       setMaxFreq(d.maxPollFreqPerMin);
       setMinFreq(d.minPollFreqPerMin);
       setAlarmTune(d.alarmTune);
 
-      const initialDistanceM = haversineDistanceM(
-        { lat: userLat, lng: userLng },
-        { lat: destLat, lng: destLng }
-      );
+      const initialDistanceM = haversineDistanceM({ lat: uLat, lng: uLng }, { lat: destLat, lng: destLng });
       setRadiusM(clampRadiusToCap(d.radiusM, initialDistanceM));
 
-      const level = await Battery.getBatteryLevelAsync();
-      const pct = Math.round(level * 100);
+      // A battery read failure falls back to the configured default instead
+      // of failing the whole load.
+      let pct = -1;
+      try {
+        const level = await Battery.getBatteryLevelAsync();
+        if (level >= 0) pct = Math.round(level * 100);
+      } catch {
+        pct = -1;
+      }
       setCurrentBatteryPct(pct);
-      setBatteryCutoff(maxAllowedBatteryCutoffPct(pct, d.batteryCutoffPct));
+      setBatteryCutoff(Math.min(d.batteryCutoffPct, batteryCutoffCap(pct, d.batteryCutoffPct)));
+
+      setUserLat(uLat);
+      setUserLng(uLng);
+      // Set last: until this is non-null the whole form (Start included)
+      // stays hidden, so there's no render where a derived field — the
+      // battery cutoff included — is visible at a stale/zero value.
+      setDefaults(d);
     } catch {
       setLoadError('Could not load journey setup. Please try again.');
     }
@@ -74,19 +119,54 @@ export function NewJourneyScreen({ navigation }: Props) {
 
   useEffect(() => {
     loadSetupData();
-    // Load once on mount; the placeholder user/destination coordinates below
-    // are stable for the lifetime of this effect.
+    // Load once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const distanceM = haversineDistanceM({ lat: userLat, lng: userLng }, { lat: destLat, lng: destLng });
+  if (loadError) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{loadError}</Text>
+        <Pressable style={styles.button} onPress={loadSetupData}>
+          <Text style={styles.buttonText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // Keeps the whole form — and Start in particular — hidden until both the
+  // default settings and the real current-location fix are known.
+  if (!defaults || userLat === null || userLng === null) return null;
+  // Local non-null aliases: TS narrowing of `userLat`/`userLng` from the
+  // check above doesn't reliably persist into the hoisted function
+  // declarations below, so bind them explicitly as `number` once here.
+  const knownUserLat = userLat;
+  const knownUserLng = userLng;
+
+  const distanceM = haversineDistanceM({ lat: knownUserLat, lng: knownUserLng }, { lat: destLat, lng: destLng });
   const radiusCapM = maxAllowedRadiusM(distanceM);
+  const destinationTooClose = radiusCapM <= 0;
+  const currentBatteryCutoffCap = batteryCutoffCap(currentBatteryPct, defaults.batteryCutoffPct);
 
   function handleDestinationChange(lat: number, lng: number) {
     setDestLat(lat);
     setDestLng(lng);
-    const newDistance = haversineDistanceM({ lat: userLat, lng: userLng }, { lat, lng });
+    const newDistance = haversineDistanceM({ lat: knownUserLat, lng: knownUserLng }, { lat, lng });
     setRadiusM((current) => clampRadiusToCap(current, newDistance));
+  }
+
+  function commitDestLat() {
+    const parsed = parseCoordinate(destLatText);
+    if (parsed !== null && parsed >= -90 && parsed <= 90) {
+      handleDestinationChange(parsed, destLng);
+    }
+  }
+
+  function commitDestLng() {
+    const parsed = parseCoordinate(destLngText);
+    if (parsed !== null && parsed >= -180 && parsed <= 180) {
+      handleDestinationChange(destLat, parsed);
+    }
   }
 
   function handleRadiusChange(km: number) {
@@ -103,8 +183,12 @@ export function NewJourneyScreen({ navigation }: Props) {
     setMaxFreq(reconciled.maxFreqPerMin);
   }
 
+  function handleBatteryCutoffChange(v: number) {
+    setBatteryCutoff(Math.min(Math.max(v, 0), currentBatteryCutoffCap));
+  }
+
   async function handleStart() {
-    if (!defaults || creating || activeJourneyBlocked) return;
+    if (!defaults || creating || activeJourneyBlocked || destinationTooClose) return;
     setCreateError(null);
     setCreating(true);
 
@@ -139,7 +223,13 @@ export function NewJourneyScreen({ navigation }: Props) {
       await startTracking(journey);
     } catch {
       // Don't leave an active-but-untracked journey behind: the row was
-      // created but the background tracker never started, so cancel it.
+      // created but the background tracker never started, so stop any
+      // partially-started tracking and cancel the journey.
+      try {
+        await stopTracking();
+      } catch {
+        // best effort
+      }
       try {
         const db = await getDb();
         await finishJourney(db, journey.id, 'cancelled');
@@ -155,19 +245,6 @@ export function NewJourneyScreen({ navigation }: Props) {
     navigation.replace('CurrentJourney', { journeyId: journey.id });
   }
 
-  if (loadError) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{loadError}</Text>
-        <Pressable style={styles.button} onPress={loadSetupData}>
-          <Text style={styles.buttonText}>Retry</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (!defaults) return null;
-
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {activeJourneyBlocked && (
@@ -175,6 +252,7 @@ export function NewJourneyScreen({ navigation }: Props) {
           Only one journey can be active at a time. Finish or cancel your current journey first.
         </Text>
       )}
+      {destinationTooClose && <Text style={styles.errorText}>Destination is too close</Text>}
       {createError !== null && <Text style={styles.errorText}>{createError}</Text>}
 
       <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Journey Name" placeholderTextColor="#6b7280" />
@@ -193,21 +271,33 @@ export function NewJourneyScreen({ navigation }: Props) {
       </Mapbox.MapView>
 
       <View style={styles.coordRow}>
-        <TextInput style={[styles.input, styles.coordInput]} keyboardType="numeric" value={String(destLat)}
-          onChangeText={(t) => handleDestinationChange(Number(t) || 0, destLng)} />
-        <TextInput style={[styles.input, styles.coordInput]} keyboardType="numeric" value={String(destLng)}
-          onChangeText={(t) => handleDestinationChange(destLat, Number(t) || 0)} />
+        <TextInput
+          style={[styles.input, styles.coordInput]}
+          keyboardType="numeric"
+          value={destLatText}
+          onChangeText={setDestLatText}
+          onEndEditing={commitDestLat}
+          onSubmitEditing={commitDestLat}
+        />
+        <TextInput
+          style={[styles.input, styles.coordInput]}
+          keyboardType="numeric"
+          value={destLngText}
+          onChangeText={setDestLngText}
+          onEndEditing={commitDestLng}
+          onSubmitEditing={commitDestLng}
+        />
       </View>
 
-      <SliderWithCustomInput label="Alarm Radius" unit="km" value={radiusM / 1000}
+      <SliderWithCustomInput testID="radiusSlider" label="Alarm Radius" unit="km" value={radiusM / 1000}
         min={RADIUS_MIN_M / 1000} max={Math.min(RADIUS_MAX_M / 1000, radiusCapM / 1000)}
         onChange={handleRadiusChange} />
-      <SliderWithCustomInput label="Max GPS Poll Frequency" unit="/m" value={maxFreq}
+      <SliderWithCustomInput testID="maxFreqSlider" label="Max GPS Poll Frequency" unit="/m" value={maxFreq}
         min={POLL_FREQ_MIN_PER_MIN} max={POLL_FREQ_MAX_PER_MIN} onChange={(v) => handleFreqChange('max', v)} />
-      <SliderWithCustomInput label="Min GPS Poll Frequency" unit="/m" value={minFreq}
+      <SliderWithCustomInput testID="minFreqSlider" label="Min GPS Poll Frequency" unit="/m" value={minFreq}
         min={POLL_FREQ_MIN_PER_MIN} max={POLL_FREQ_MAX_PER_MIN} onChange={(v) => handleFreqChange('min', v)} />
-      <SliderWithCustomInput label="Low Battery Cutoff" unit="%" value={batteryCutoff}
-        min={0} max={maxAllowedBatteryCutoffPct(currentBatteryPct, defaults.batteryCutoffPct)} onChange={setBatteryCutoff} />
+      <SliderWithCustomInput testID="batteryCutoffSlider" label="Low Battery Cutoff" unit="%" value={batteryCutoff}
+        min={0} max={currentBatteryCutoffCap} onChange={handleBatteryCutoffChange} />
 
       <View style={styles.field}>
         <Text style={styles.label}>Alarm Tune</Text>
@@ -215,7 +305,12 @@ export function NewJourneyScreen({ navigation }: Props) {
           placeholder="Alarm Tune" placeholderTextColor="#6b7280" />
       </View>
 
-      <Pressable style={styles.button} onPress={handleStart} disabled={creating || activeJourneyBlocked}>
+      <Pressable
+        style={styles.button}
+        onPress={handleStart}
+        disabled={creating || activeJourneyBlocked || destinationTooClose}
+        testID="startJourneyButton"
+      >
         <Text style={styles.buttonText}>{creating ? 'Starting…' : 'Start Journey'}</Text>
       </Pressable>
     </ScrollView>
