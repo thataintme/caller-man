@@ -13,13 +13,33 @@ import {
 export function DefaultSettingsScreen() {
   const [settings, setSettings] = useState<DefaultSettings | null>(null);
   const [saved, setSaved] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
+  async function loadSettings() {
+    setLoadError(null);
+    try {
       const db = await getDb();
       setSettings(await getDefaultSettings(db));
-    })();
+    } catch {
+      setLoadError('Could not load default settings. Please try again.');
+    }
+  }
+
+  useEffect(() => {
+    loadSettings();
   }, []);
+
+  if (loadError) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{loadError}</Text>
+        <Pressable style={styles.button} onPress={loadSettings}>
+          <Text style={styles.buttonText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (!settings) return null;
 
@@ -34,13 +54,20 @@ export function DefaultSettingsScreen() {
   }
 
   async function handleSave() {
-    const db = await getDb();
-    await saveDefaultSettings(db, settings!);
-    setSaved(true);
+    setSaveError(null);
+    try {
+      const db = await getDb();
+      await saveDefaultSettings(db, settings!);
+      setSaved(true);
+    } catch {
+      setSaved(false);
+      setSaveError('Could not save default settings. Please try again.');
+    }
   }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
+      {saveError !== null && <Text style={styles.errorText}>{saveError}</Text>}
       <SliderWithCustomInput label="Alarm Radius" unit="km" value={settings.radiusM / 1000}
         min={RADIUS_MIN_M / 1000} max={RADIUS_MAX_M / 1000}
         onChange={(v) => { setSettings({ ...settings, radiusM: v * 1000 }); setSaved(false); }} />
@@ -70,6 +97,14 @@ export function DefaultSettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { padding: 20, backgroundColor: '#0b0f1a', flexGrow: 1 },
+  centered: {
+    flex: 1,
+    backgroundColor: '#0b0f1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: { color: '#f87171', textAlign: 'center', marginBottom: 12 },
   field: { marginVertical: 12 },
   label: { color: '#e5e7eb', marginBottom: 6 },
   input: { borderWidth: 1, borderColor: '#374151', borderRadius: 6, padding: 8, color: '#fff' },

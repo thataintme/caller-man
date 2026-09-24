@@ -33,3 +33,9 @@ test('saving persists the loaded settings via the repository', async () => {
     { timeout: 20000 }
   );
 });
+
+test('shows an error message when loading default settings fails', async () => {
+  (getDefaultSettings as jest.Mock).mockRejectedValue(new Error('db unavailable'));
+  const { findByText } = render(<DefaultSettingsScreen />);
+  await findByText('Could not load default settings. Please try again.', {}, { timeout: 20000 });
+});
