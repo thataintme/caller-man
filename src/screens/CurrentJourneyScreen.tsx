@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import { useFocusEffect } from '@react-navigation/native';
@@ -10,6 +10,7 @@ import { getRecentFixes, pruneFixesForJourney } from '../db/locationLogRepo';
 import { Journey } from '../types/journey';
 import { haversineDistanceM } from '../geo/haversine';
 import { averageSpeedMps, estimateEta } from '../geo/estimation';
+import { circlePolygon } from '../geo/circlePolygon';
 import { stopTracking } from '../location/locationService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CurrentJourney'>;
@@ -25,6 +26,7 @@ export const REFRESH_INTERVAL_MS = 15_000;
 
 export function CurrentJourneyScreen({ navigation }: Props) {
   const [journey, setJourney] = useState<Journey | null>(null);
+  const [currentPosition, setCurrentPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [remainingM, setRemainingM] = useState<number | null>(null);
   const [speedMps, setSpeedMps] = useState<number | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
@@ -67,6 +69,7 @@ export function CurrentJourneyScreen({ navigation }: Props) {
       if (!mountedRef.current || recent.length === 0) return;
 
       const last = recent[recent.length - 1];
+      setCurrentPosition({ lat: last.lat, lng: last.lng });
       const distance = haversineDistanceM(last, { lat: active.destinationLat, lng: active.destinationLng });
       const speed = averageSpeedMps(
         recent.map((f) => ({ lat: f.lat, lng: f.lng, recordedAt: f.recordedAt })),
@@ -99,6 +102,16 @@ export function CurrentJourneyScreen({ navigation }: Props) {
     const id = setInterval(load, REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
   }, [load]);
+
+  // Geodesic polygon approximating the arrival radius in meters; CircleLayer's
+  // circleRadius is in screen pixels, not meters, so it can't represent this.
+  const radiusRing = useMemo(
+    () =>
+      journey
+        ? circlePolygon({ lat: journey.destinationLat, lng: journey.destinationLng }, journey.radiusM)
+        : [],
+    [journey]
+  );
 
   function handleCancel() {
     if (!journey) return;
@@ -150,22 +163,35 @@ export function CurrentJourneyScreen({ navigation }: Props) {
     return null;
   }
 
+  // Live position when we have one; otherwise fall back to the destination
+  // (e.g. right after starting, before the first fix has been logged).
+  const mapCenter = currentPosition ?? { lat: journey.destinationLat, lng: journey.destinationLng };
+
   return (
     <View style={styles.container}>
       <Mapbox.MapView style={styles.map}>
-        <Mapbox.Camera centerCoordinate={[journey.destinationLng, journey.destinationLat]} zoomLevel={11} />
+        <Mapbox.Camera centerCoordinate={[mapCenter.lng, mapCenter.lat]} zoomLevel={11} />
         <Mapbox.PointAnnotation id="destination" coordinate={[journey.destinationLng, journey.destinationLat]}>
           <View style={styles.destinationMarker} />
         </Mapbox.PointAnnotation>
+        {currentPosition ? (
+          <Mapbox.PointAnnotation id="current-location" coordinate={[currentPosition.lng, currentPosition.lat]}>
+            <View style={styles.currentLocationMarker} />
+          </Mapbox.PointAnnotation>
+        ) : null}
         <Mapbox.ShapeSource
           id="radius-source"
           shape={{
             type: 'Feature',
-            geometry: { type: 'Point', coordinates: [journey.destinationLng, journey.destinationLat] },
-            properties: { radius: journey.radiusM },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [radiusRing],
+            },
+            properties: {},
           }}
         >
-          <Mapbox.CircleLayer id="radius-layer" style={{ circleRadius: journey.radiusM, circleOpacity: 0.15 }} />
+          <Mapbox.FillLayer id="radius-fill-layer" style={{ fillColor: '#10b981', fillOpacity: 0.15 }} />
+          <Mapbox.LineLayer id="radius-line-layer" style={{ lineColor: '#10b981', lineWidth: 2 }} />
         </Mapbox.ShapeSource>
       </Mapbox.MapView>
 
@@ -199,6 +225,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0b0f1a' },
   map: { flex: 1 },
   destinationMarker: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#ef4444' },
+  currentLocationMarker: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#3b82f6',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
   panel: { padding: 20 },
   destination: { color: '#fff', fontSize: 18, fontWeight: '700' },
   info: { color: '#9ca3af', marginTop: 4 },

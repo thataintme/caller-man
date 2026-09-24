@@ -27,7 +27,7 @@ jest.mock('@notifee/react-native', () => ({
 jest.mock('@react-navigation/native', () => ({ useFocusEffect: (cb: () => void) => cb() }));
 jest.mock('@rnmapbox/maps', () => ({
   MapView: 'MapboxMapView', Camera: 'MapboxCamera', PointAnnotation: 'MapboxPointAnnotation',
-  ShapeSource: 'MapboxShapeSource', CircleLayer: 'MapboxCircleLayer',
+  ShapeSource: 'MapboxShapeSource', FillLayer: 'MapboxFillLayer', LineLayer: 'MapboxLineLayer',
 }));
 
 const journey = {
@@ -55,6 +55,43 @@ test('cancelling the journey marks it cancelled, stops tracking, and navigates h
   expect(pruneFixesForJourney).toHaveBeenCalledWith(expect.anything(), 5);
   expect(stopTracking).toHaveBeenCalled();
   expect(navigation.replace).toHaveBeenCalledWith('Journeys');
+});
+
+test('cancels in order: stopTracking, then finishJourney, then pruneFixesForJourney', async () => {
+  jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
+    buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
+  });
+  const navigation = { replace: jest.fn() } as any;
+  const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Cancel Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Cancel Journey'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+
+  const stopOrder = (stopTracking as jest.Mock).mock.invocationCallOrder[0];
+  const finishOrder = (finishJourney as jest.Mock).mock.invocationCallOrder[0];
+  const pruneOrder = (pruneFixesForJourney as jest.Mock).mock.invocationCallOrder[0];
+  expect(stopOrder).toBeLessThan(finishOrder);
+  expect(finishOrder).toBeLessThan(pruneOrder);
+});
+
+test('shows a cancel error and re-enables Cancel Journey when finishJourney fails partway through', async () => {
+  (finishJourney as jest.Mock).mockRejectedValue(new Error('db unavailable'));
+  jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
+    buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
+  });
+  const navigation = { replace: jest.fn() } as any;
+  const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Cancel Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Cancel Journey'));
+
+  await findByText('Could not cancel the journey. Please try again.', {}, { timeout: 20000 });
+  expect(navigation.replace).not.toHaveBeenCalledWith('Journeys');
+  expect(pruneFixesForJourney).not.toHaveBeenCalled();
+
+  // Button is re-enabled: pressing again re-triggers stopTracking a second time.
+  fireEvent.press(getByText('Cancel Journey'));
+  await waitFor(() => expect(stopTracking).toHaveBeenCalledTimes(2), { timeout: 20000 });
 });
 
 test('replaces to the Alarm screen when the active journey has already arrived', async () => {
