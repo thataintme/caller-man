@@ -1,21 +1,32 @@
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
+import { AppState, Linking, Switch } from 'react-native';
 import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
 import notifee from '@notifee/react-native';
 import { WelcomeScreen } from './WelcomeScreen';
 
 jest.mock('expo-location');
-jest.mock('expo-notifications');
-jest.mock('@notifee/react-native', () => ({ requestPermission: jest.fn() }));
+jest.mock('@notifee/react-native', () => ({
+  requestPermission: jest.fn(),
+  openNotificationSettings: jest.fn().mockResolvedValue(undefined),
+}));
 
 const navigation = { replace: jest.fn() } as any;
 
-beforeEach(() => jest.clearAllMocks());
+let appStateHandler: (state: string) => void = () => {};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, handler) => {
+    appStateHandler = handler as unknown as (state: string) => void;
+    return { remove: jest.fn() } as any;
+  });
+  jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
+  jest.spyOn(Linking, 'sendIntent').mockResolvedValue(undefined);
+});
 
 test('does not navigate when GPS permission is denied', async () => {
   (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
   (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
-  (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
   (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
 
   const { getByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
@@ -28,11 +39,64 @@ test('does not navigate when GPS permission is denied', async () => {
 test('navigates to Journeys once GPS and background permission are granted', async () => {
   (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
   (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
-  (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
   (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
 
   const { getByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
   fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'));
+});
+
+test('shows an Open Settings button and does not navigate when background location stays denied', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
+
+  const { getByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(getByText('Open Settings')).toBeTruthy());
+  expect(navigation.replace).not.toHaveBeenCalled();
+});
+
+test('shows a warning banner when an optional permission is denied', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 0 });
+
+  const { getByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(getByText('Notifications permission was denied')).toBeTruthy());
+});
+
+test('renders full-screen alarm and DND bypass as Check in Settings rows without a switch', () => {
+  const { getAllByText, UNSAFE_getAllByType } = render(
+    <WelcomeScreen navigation={navigation} route={{} as any} />
+  );
+
+  expect(getAllByText('Check in Settings')).toHaveLength(2);
+  expect(UNSAFE_getAllByType(Switch)).toHaveLength(4);
+});
+
+test('re-checks location permissions on app resume and navigates once both are granted', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
+  (Location.getForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (Location.getBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+
+  const { getByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(getByText('Open Settings')).toBeTruthy());
+
+  await act(async () => {
+    appStateHandler('active');
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'));
 });
