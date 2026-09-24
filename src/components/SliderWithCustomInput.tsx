@@ -20,20 +20,32 @@ function parseCustomValue(text: string): number {
 export function SliderWithCustomInput({ label, unit, value, min, max, step = 1, onChange, testID }: Props) {
   const [useCustom, setUseCustom] = useState(false);
   const [customText, setCustomText] = useState(String(value));
+  // Bumped on every accepted commit so the resync effect below re-runs even
+  // when the parent's settled `value` turns out equal to what it was before
+  // (e.g. the parent clamps a typed 40 back down to a cap of 5, which was
+  // already the value) — a [value]-only dependency would never fire then,
+  // leaving the rejected "40" stuck on screen.
+  const [commitNonce, setCommitNonce] = useState(0);
 
   useEffect(() => {
-    if (parseCustomValue(customText) !== value) {
-      setCustomText(String(value));
-    }
-    // Only resync when the parent-provided value changes; an in-progress edit
-    // (e.g. "12.") must not be clobbered by re-renders triggered by other props.
+    setCustomText(String(value));
+    // Resync whenever the parent-provided value changes, or after any
+    // accepted commit (commitNonce) regardless of whether the settled value
+    // changed. This intentionally does not depend on customText itself —
+    // an in-progress edit (e.g. "12.") isn't touched between commits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [value, commitNonce]);
 
   function commitCustomValue() {
     const parsed = parseCustomValue(customText);
     if (Number.isFinite(parsed) && parsed > 0) {
       onChange(parsed);
+      setCommitNonce((n) => n + 1);
+    } else {
+      // Invalid input (e.g. "abc"): nothing was committed, so revert the
+      // displayed text to the current value rather than leaving the
+      // rejected text on screen.
+      setCustomText(String(value));
     }
   }
 

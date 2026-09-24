@@ -192,3 +192,36 @@ test('shows an error and Retry when fetching the current location fails, and doe
   expect(await findByText('Retry', {}, { timeout: 20000 })).toBeTruthy();
   expect(queryByText('Start Journey')).toBeNull();
 });
+
+test('shows a loading state while the current-location fix is pending', async () => {
+  let resolvePosition: (value: { coords: typeof MOCK_USER_COORDS }) => void = () => {};
+  (Location.getCurrentPositionAsync as jest.Mock).mockReturnValue(
+    new Promise((resolve) => {
+      resolvePosition = resolve;
+    })
+  );
+  const { findByText } = render(<NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />);
+
+  await findByText('Getting your location…', {}, { timeout: 20000 });
+
+  // Resolve and let the form finish loading so nothing is left pending when
+  // the test (and its mocks) tear down.
+  resolvePosition({ coords: MOCK_USER_COORDS });
+  await findByText('Start Journey', {}, { timeout: 20000 });
+});
+
+test('reverts the latitude field to the current destination when a commit is out of range', async () => {
+  const navigation = { replace: jest.fn() } as any;
+  const { getByTestId, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Start Journey', {}, { timeout: 20000 });
+
+  const latInput = getByTestId('destLatInput');
+  expect(latInput.props.value).toBe(String(PLACEHOLDER_DEST_LAT));
+
+  fireEvent.changeText(latInput, '200');
+  fireEvent(latInput, 'endEditing');
+
+  await waitFor(() => expect(getByTestId('destLatInput').props.value).toBe(String(PLACEHOLDER_DEST_LAT)), {
+    timeout: 20000,
+  });
+});

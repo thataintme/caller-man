@@ -41,6 +41,20 @@ function parseCoordinate(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+const LOCATION_TIMEOUT_MS = 20_000;
+
+// Races a promise against a timeout so a stuck GPS fix doesn't leave the
+// screen loading forever; on timeout it rejects (falling into the same
+// load-error + Retry path as any other load failure). The timer is cleared
+// on either outcome so it doesn't linger past test/component lifetime.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Timed out waiting for the current location')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export function NewJourneyScreen({ navigation }: Props) {
   const [defaults, setDefaults] = useState<DefaultSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -78,7 +92,7 @@ export function NewJourneyScreen({ navigation }: Props) {
     try {
       const db = await getDb();
       const [position, d, active] = await Promise.all([
-        Location.getCurrentPositionAsync(),
+        withTimeout(Location.getCurrentPositionAsync(), LOCATION_TIMEOUT_MS),
         getDefaultSettings(db),
         getActiveJourney(db),
       ]);
@@ -136,7 +150,13 @@ export function NewJourneyScreen({ navigation }: Props) {
 
   // Keeps the whole form — and Start in particular — hidden until both the
   // default settings and the real current-location fix are known.
-  if (!defaults || userLat === null || userLng === null) return null;
+  if (!defaults || userLat === null || userLng === null) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.loadingText}>Getting your location…</Text>
+      </View>
+    );
+  }
   // Local non-null aliases: TS narrowing of `userLat`/`userLng` from the
   // check above doesn't reliably persist into the hoisted function
   // declarations below, so bind them explicitly as `number` once here.
@@ -159,6 +179,10 @@ export function NewJourneyScreen({ navigation }: Props) {
     const parsed = parseCoordinate(destLatText);
     if (parsed !== null && parsed >= -90 && parsed <= 90) {
       handleDestinationChange(parsed, destLng);
+    } else {
+      // Rejected (out of range or unparseable): revert to the current,
+      // still-valid destination rather than leaving the bad text on screen.
+      setDestLatText(String(destLat));
     }
   }
 
@@ -166,6 +190,8 @@ export function NewJourneyScreen({ navigation }: Props) {
     const parsed = parseCoordinate(destLngText);
     if (parsed !== null && parsed >= -180 && parsed <= 180) {
       handleDestinationChange(destLat, parsed);
+    } else {
+      setDestLngText(String(destLng));
     }
   }
 
@@ -278,6 +304,7 @@ export function NewJourneyScreen({ navigation }: Props) {
           onChangeText={setDestLatText}
           onEndEditing={commitDestLat}
           onSubmitEditing={commitDestLat}
+          testID="destLatInput"
         />
         <TextInput
           style={[styles.input, styles.coordInput]}
@@ -286,6 +313,7 @@ export function NewJourneyScreen({ navigation }: Props) {
           onChangeText={setDestLngText}
           onEndEditing={commitDestLng}
           onSubmitEditing={commitDestLng}
+          testID="destLngInput"
         />
       </View>
 
@@ -327,6 +355,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   errorText: { color: '#f87171', textAlign: 'center', marginBottom: 12 },
+  loadingText: { color: '#9ca3af', textAlign: 'center' },
   field: { marginVertical: 12 },
   label: { color: '#e5e7eb', marginBottom: 6 },
   input: { borderWidth: 1, borderColor: '#374151', borderRadius: 6, padding: 8, color: '#fff', marginBottom: 12 },
