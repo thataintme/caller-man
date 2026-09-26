@@ -13,6 +13,13 @@ jest.mock('../db/expoSqliteClient', () => ({ getDb: jest.fn().mockResolvedValue(
 jest.mock('../db/journeysRepo');
 jest.mock('../db/locationLogRepo');
 jest.mock('../location/locationService');
+// Factory (not automock): alarmActions.ts (imported for real by this screen)
+// now calls removeAreaCacheForJourney (Task 30), and offlineMapCache.ts
+// imports '@rnmapbox/maps', which throws when required unmocked — same
+// reason locationService above needs a factory instead of a bare automock.
+jest.mock('../location/offlineMapCache', () => ({
+  removeAreaCacheForJourney: jest.fn().mockResolvedValue(undefined),
+}));
 // Replaced (not automocked) so this test doesn't need to also stand up a full
 // '@notifee/react-native' shape for alarmManager's own dependencies
 // (createChannel/displayNotification/etc) — only the two functions this

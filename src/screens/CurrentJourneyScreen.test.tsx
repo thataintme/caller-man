@@ -4,6 +4,7 @@ import { CurrentJourneyScreen, REFRESH_INTERVAL_MS } from './CurrentJourneyScree
 import { getActiveJourney, finishJourney } from '../db/journeysRepo';
 import { getRecentFixes, pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
+import { removeAreaCacheForJourney } from '../location/offlineMapCache';
 import notifee from '@notifee/react-native';
 
 jest.setTimeout(45000);
@@ -12,6 +13,7 @@ jest.mock('../db/expoSqliteClient', () => ({ getDb: jest.fn().mockResolvedValue(
 jest.mock('../db/journeysRepo');
 jest.mock('../db/locationLogRepo');
 jest.mock('../location/locationService');
+jest.mock('../location/offlineMapCache');
 // jest.mock('../location/locationService') is an automock: Jest still requires
 // the real module first to learn its shape, which pulls in
 // locationService -> backgroundTask -> alarmManager -> '@notifee/react-native'.
@@ -75,6 +77,46 @@ test('cancels in order: stopTracking, then finishJourney, then pruneFixesForJour
   const pruneOrder = (pruneFixesForJourney as jest.Mock).mock.invocationCallOrder[0];
   expect(stopOrder).toBeLessThan(finishOrder);
   expect(finishOrder).toBeLessThan(pruneOrder);
+});
+
+// R30.1: eviction stays in this screen's cancel path (unlike arrival, which
+// moved to alarmActions.ts), placed after stopTracking/finishJourney and
+// before navigating away.
+test('evicts the offline area cache for the journey after finishing it, before navigating home', async () => {
+  jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
+    buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
+  });
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
+  const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Cancel Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Cancel Journey'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+
+  expect(removeAreaCacheForJourney).toHaveBeenCalledWith(5);
+  const finishOrder = (finishJourney as jest.Mock).mock.invocationCallOrder[0];
+  const pruneOrder = (pruneFixesForJourney as jest.Mock).mock.invocationCallOrder[0];
+  const evictOrder = (removeAreaCacheForJourney as jest.Mock).mock.invocationCallOrder[0];
+  expect(finishOrder).toBeLessThan(evictOrder);
+  expect(pruneOrder).toBeLessThan(evictOrder);
+});
+
+// R30.2: eviction is best-effort — a rejection must not surface as a cancel
+// error or block navigating back to Journeys.
+test('still cancels and navigates home when evicting the offline area cache fails', async () => {
+  (removeAreaCacheForJourney as jest.Mock).mockRejectedValue(new Error('boom'));
+  jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
+    buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
+  });
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
+  const { getByText, findByText, queryByText } = render(
+    <CurrentJourneyScreen navigation={navigation} route={{} as any} />
+  );
+  await findByText('Cancel Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Cancel Journey'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+  expect(queryByText('Could not cancel the journey. Please try again.')).toBeNull();
 });
 
 test('cancelling silences every alert id for the journey (incl. pending snoozes) before finishing it', async () => {

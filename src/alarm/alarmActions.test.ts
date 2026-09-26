@@ -4,6 +4,7 @@ import { scheduleSnoozedAlert } from './alarmManager';
 import { getJourneyById, finishJourney } from '../db/journeysRepo';
 import { pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
+import { removeAreaCacheForJourney } from '../location/offlineMapCache';
 import { Journey } from '../types/journey';
 
 jest.mock('@notifee/react-native', () => ({
@@ -16,6 +17,12 @@ jest.mock('../db/locationLogRepo');
 // Factory (not automock) so the real locationService -> backgroundTask ->
 // expo-task-manager chain is never loaded here.
 jest.mock('../location/locationService', () => ({ stopTracking: jest.fn().mockResolvedValue(undefined) }));
+// Factory (not automock): offlineMapCache.ts imports '@rnmapbox/maps', and an
+// automock still requires the real module first to learn its shape — same
+// reason locationService above needs a factory instead of a bare automock.
+jest.mock('../location/offlineMapCache', () => ({
+  removeAreaCacheForJourney: jest.fn().mockResolvedValue(undefined),
+}));
 // Real alarmNotificationId/cancelAllAlertsForJourney (they only call the
 // mocked notifee above); only the trigger scheduling is replaced.
 jest.mock('./alarmManager', () => ({
@@ -114,6 +121,25 @@ describe('dismissAlarm', () => {
     expect(scheduleSnoozedAlert).not.toHaveBeenCalled();
   });
 
+  // R30.1: eviction on arrival lives here (not in AlarmScreen), after
+  // stopTracking.
+  test('arrival: evicts the offline area cache for the journey, after stopTracking', async () => {
+    await dismissAlarm(7, 'arrival');
+
+    expect(removeAreaCacheForJourney).toHaveBeenCalledWith(7);
+    const stopOrder = (stopTracking as jest.Mock).mock.invocationCallOrder[0];
+    const evictOrder = (removeAreaCacheForJourney as jest.Mock).mock.invocationCallOrder[0];
+    expect(stopOrder).toBeLessThan(evictOrder);
+  });
+
+  // R30.2: eviction is best-effort — a rejection must not surface as a
+  // dismiss error (the journey is already completed by this point).
+  test('arrival: a failure evicting the offline area cache does not surface as a dismiss error', async () => {
+    (removeAreaCacheForJourney as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+    await expect(dismissAlarm(7, 'arrival')).resolves.toBeUndefined();
+    expect(finishJourney).toHaveBeenCalledWith(expect.anything(), 7, 'completed');
+  });
+
   test.each([
     ['gpsLoss', 'gps-loss-7'],
     ['lowBattery', 'low-battery-7'],
@@ -124,6 +150,9 @@ describe('dismissAlarm', () => {
     expect(finishJourney).not.toHaveBeenCalled();
     expect(pruneFixesForJourney).not.toHaveBeenCalled();
     expect(stopTracking).not.toHaveBeenCalled();
+    // R30.1: eviction is for arrival only — a gpsLoss/lowBattery dismiss
+    // leaves the journey (and its cache) running.
+    expect(removeAreaCacheForJourney).not.toHaveBeenCalled();
   });
 
   test('stale (missing) journey: cancels the notification and returns without finishing anything', async () => {

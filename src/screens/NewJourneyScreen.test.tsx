@@ -7,6 +7,7 @@ import { createJourney, ActiveJourneyExistsError, getActiveJourney, finishJourne
 import { startTracking, stopTracking } from '../location/locationService';
 import { haversineDistanceM } from '../geo/haversine';
 import { searchDestination } from '../location/geocode';
+import { cacheAreaForJourney } from '../location/offlineMapCache';
 import { isMapboxTokenConfigured } from '../constants/mapbox';
 
 jest.setTimeout(45000);
@@ -23,6 +24,7 @@ jest.mock('@rnmapbox/maps', () => ({
   PointAnnotation: 'MapboxPointAnnotation',
 }));
 jest.mock('../location/geocode');
+jest.mock('../location/offlineMapCache');
 jest.mock('../constants/mapbox', () => ({
   MAPBOX_ACCESS_TOKEN: 'test-token',
   isMapboxTokenConfigured: jest.fn(),
@@ -87,6 +89,39 @@ test('starting a journey creates it, starts tracking, and navigates to CurrentJo
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 42 }), { timeout: 20000 });
   expect(startTracking).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }));
+});
+
+test('caches the journey area for offline use after tracking starts, with the real user position', async () => {
+  (createJourney as jest.Mock).mockResolvedValue({ id: 42, status: 'active' });
+  const navigation = { replace: jest.fn() } as any;
+  const { getByText, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Start Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Start Journey'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalled(), { timeout: 20000 });
+  expect(cacheAreaForJourney).toHaveBeenCalledWith(
+    expect.objectContaining({ id: 42 }),
+    MOCK_USER_COORDS.latitude,
+    MOCK_USER_COORDS.longitude
+  );
+});
+
+// R30.2: caching is fire-and-forget — a slow/failed cache download must
+// never delay or block navigating to CurrentJourney, and never surface as an
+// error on this screen (the real cacheAreaForJourney already swallows its
+// own errors; this guards the call site too, since it doesn't await it).
+test('navigates to CurrentJourney even when caching the area fails', async () => {
+  (createJourney as jest.Mock).mockResolvedValue({ id: 42, status: 'active' });
+  (cacheAreaForJourney as jest.Mock).mockRejectedValue(new Error('offline'));
+  const navigation = { replace: jest.fn() } as any;
+  const { getByText, findByText, queryByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Start Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Start Journey'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 42 }), {
+    timeout: 20000,
+  });
+  expect(queryByText(/could not/i)).toBeNull();
 });
 
 test('creates the journey with a meters-based radius, the real computed distance, and defaults-derived fields', async () => {

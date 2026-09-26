@@ -15,6 +15,11 @@ jest.mock('../db/expoSqliteClient', () => ({}));
 jest.mock('../db/journeysRepo', () => ({}));
 jest.mock('../db/locationLogRepo', () => ({}));
 jest.mock('../location/locationService', () => ({}));
+// alarmActions.ts (real, via requireActual above for nextRouteAfterAlarm)
+// also calls removeAreaCacheForJourney (Task 30); offlineMapCache.ts imports
+// '@rnmapbox/maps', which throws when required unmocked, so it needs its own
+// stub too even though nextRouteAfterAlarm never calls it.
+jest.mock('../location/offlineMapCache', () => ({}));
 
 const J = { name: 'Journeys' };
 const CJ = (journeyId: number) => ({ name: 'CurrentJourney', params: { journeyId } });

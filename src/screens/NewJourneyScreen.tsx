@@ -16,8 +16,9 @@ import { reconcileMinMaxFreq } from '../geo/pollFreqOrdering';
 import { maxAllowedBatteryCutoffPct } from '../geo/batteryCutoff';
 import { startTracking, stopTracking } from '../location/locationService';
 import { searchDestination, GeocodeResult } from '../location/geocode';
+import { cacheAreaForJourney } from '../location/offlineMapCache';
 import { RADIUS_MIN_M, RADIUS_MAX_M, POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN } from '../constants/limits';
-import { MAPBOX_ACCESS_TOKEN, isMapboxTokenConfigured } from '../constants/mapbox';
+import { MAPBOX_ACCESS_TOKEN, MAP_STYLE_URL, isMapboxTokenConfigured } from '../constants/mapbox';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'NewJourney'>;
 
@@ -300,6 +301,12 @@ export function NewJourneyScreen({ navigation }: Props) {
       return;
     }
 
+    // R30.2: fire-and-forget — a slow or offline pack download must never
+    // hold the user on this screen or surface as an error here.
+    // Promise.resolve(...) tolerates cacheAreaForJourney rejecting even
+    // though the real implementation already catches its own errors.
+    Promise.resolve(cacheAreaForJourney(journey, knownUserLat, knownUserLng)).catch(() => {});
+
     setCreating(false);
     navigation.replace('CurrentJourney', { journeyId: journey.id });
   }
@@ -358,6 +365,7 @@ export function NewJourneyScreen({ navigation }: Props) {
 
       <Mapbox.MapView
         style={styles.map}
+        styleURL={MAP_STYLE_URL}
         onPress={(e: any) => {
           const [lng, lat] = e.geometry.coordinates as [number, number];
           handleDestinationChange(lat, lng);

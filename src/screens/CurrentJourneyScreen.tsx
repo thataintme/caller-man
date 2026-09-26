@@ -12,7 +12,9 @@ import { haversineDistanceM } from '../geo/haversine';
 import { averageSpeedMps, estimateEta } from '../geo/estimation';
 import { circlePolygon } from '../geo/circlePolygon';
 import { stopTracking } from '../location/locationService';
+import { removeAreaCacheForJourney } from '../location/offlineMapCache';
 import { cancelAllAlertsForJourney } from '../alarm/alarmManager';
+import { MAP_STYLE_URL } from '../constants/mapbox';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CurrentJourney'>;
 
@@ -146,6 +148,14 @@ export function CurrentJourneyScreen({ navigation }: Props) {
       const db = await getDb();
       await finishJourney(db, journey.id, 'cancelled');
       await pruneFixesForJourney(db, journey.id);
+      // R30.1/R30.2: evict the offline area cache now the journey is over.
+      // Awaited (it's quick) but its own failure must never surface as a
+      // cancel error or block navigating back to Journeys.
+      try {
+        await removeAreaCacheForJourney(journey.id);
+      } catch {
+        // best effort
+      }
       navigation.replace('Journeys');
     } catch {
       if (mountedRef.current) {
@@ -179,7 +189,7 @@ export function CurrentJourneyScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <Mapbox.MapView style={styles.map}>
+      <Mapbox.MapView style={styles.map} styleURL={MAP_STYLE_URL}>
         <Mapbox.Camera centerCoordinate={[mapCenter.lng, mapCenter.lat]} zoomLevel={11} />
         <Mapbox.PointAnnotation id="destination" coordinate={[journey.destinationLng, journey.destinationLat]}>
           <View style={styles.destinationMarker} />

@@ -3,6 +3,7 @@ import { getDb } from '../db/expoSqliteClient';
 import { getJourneyById, finishJourney } from '../db/journeysRepo';
 import { pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
+import { removeAreaCacheForJourney } from '../location/offlineMapCache';
 import { Journey } from '../types/journey';
 import { AlarmKind, alarmNotificationId, cancelAllAlertsForJourney, scheduleSnoozedAlert } from './alarmManager';
 
@@ -57,6 +58,14 @@ export async function dismissAlarm(journeyId: number, kind: AlarmKind): Promise<
   await finishJourney(db, journeyId, 'completed');
   await pruneFixesForJourney(db, journeyId);
   await stopTracking();
+
+  // R30.1/R30.2: evict the offline area cache now the journey has arrived.
+  // Best-effort — a failure here must never surface as a dismiss error.
+  try {
+    await removeAreaCacheForJourney(journeyId);
+  } catch {
+    // best effort
+  }
 }
 
 export type RouteAfterAlarm = { name: 'Journeys' } | { name: 'CurrentJourney'; params: { journeyId: number } };

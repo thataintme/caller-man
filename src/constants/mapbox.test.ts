@@ -38,3 +38,8 @@ test('uses the env var value and is configured when it is set to a real token', 
   expect(MAPBOX_ACCESS_TOKEN).toBe('pk.unit-test-fake-token');
   expect(isMapboxTokenConfigured()).toBe(true);
 });
+
+test('MAP_STYLE_URL is the shared Mapbox Street style (R30.3)', () => {
+  const { MAP_STYLE_URL } = loadModule();
+  expect(MAP_STYLE_URL).toBe('mapbox://styles/mapbox/streets-v11');
+});
