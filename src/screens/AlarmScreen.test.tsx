@@ -5,6 +5,7 @@ import { pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
 import notifee from '@notifee/react-native';
 import { scheduleSnoozedAlert } from '../alarm/alarmManager';
+import { createFakeStackNavigation } from '../navigation/fakeStackNavigation.testutil';
 
 jest.setTimeout(45000);
 
@@ -27,6 +28,18 @@ jest.mock('../alarm/alarmManager', () => ({
 jest.mock('@notifee/react-native', () => ({
   cancelNotification: jest.fn().mockResolvedValue(undefined),
 }));
+
+// A real stack (StackRouter-backed fake) with this Alarm pushed over the
+// journey's tracking screen, as the foreground DELIVERED path produces.
+function alarmOnTopOfTracking(kind: string) {
+  return createFakeStackNavigation([
+    { name: 'Journeys' },
+    { name: 'CurrentJourney', params: { journeyId: 7 } },
+    { name: 'Alarm', params: { journeyId: 7, kind } },
+  ]);
+}
+const JOURNEYS_ONLY = [{ name: 'Journeys' }];
+const BACK_ON_TRACKING = [{ name: 'Journeys' }, { name: 'CurrentJourney', params: { journeyId: 7 } }];
 
 const journey = {
   id: 7,
@@ -54,14 +67,14 @@ beforeEach(() => {
 });
 
 test('dismissing an arrival alarm cancels the notification, completes the journey, prunes fixes, stops tracking, and goes to Journeys', async () => {
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('arrival');
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
   );
   await findByText('Dismiss', {}, { timeout: 20000 });
   fireEvent.press(getByText('Dismiss'));
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+  await waitFor(() => expect(navigation.routes()).toEqual(JOURNEYS_ONLY), { timeout: 20000 });
 
   expect(notifee.cancelNotification).toHaveBeenCalledWith('arrival-7');
   expect(finishJourney).toHaveBeenCalledWith(expect.anything(), 7, 'completed');
@@ -78,14 +91,14 @@ test('dismissing an arrival alarm cancels the notification, completes the journe
 });
 
 test('dismissing a GPS-loss alarm cancels the notification and returns to Current Journey without finishing the journey', async () => {
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('gpsLoss');
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'gpsLoss' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'gpsLoss' } } as any} navigation={navigation as any} />
   );
   await findByText('Dismiss', {}, { timeout: 20000 });
   fireEvent.press(getByText('Dismiss'));
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 7 }), {
+  await waitFor(() => expect(navigation.routes()).toEqual(BACK_ON_TRACKING), {
     timeout: 20000,
   });
   expect(notifee.cancelNotification).toHaveBeenCalledWith('gps-loss-7');
@@ -95,14 +108,14 @@ test('dismissing a GPS-loss alarm cancels the notification and returns to Curren
 });
 
 test('dismissing a low-battery alarm cancels the notification and returns to Current Journey without finishing the journey', async () => {
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('lowBattery');
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'lowBattery' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'lowBattery' } } as any} navigation={navigation as any} />
   );
   await findByText('Dismiss', {}, { timeout: 20000 });
   fireEvent.press(getByText('Dismiss'));
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 7 }), {
+  await waitFor(() => expect(navigation.routes()).toEqual(BACK_ON_TRACKING), {
     timeout: 20000,
   });
   expect(notifee.cancelNotification).toHaveBeenCalledWith('low-battery-7');
@@ -110,15 +123,15 @@ test('dismissing a low-battery alarm cancels the notification and returns to Cur
 });
 
 test('snoozing an arrival alarm cancels the notification, schedules a snoozed re-alert at snoozeMinutes from now, and goes to Journeys', async () => {
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('arrival');
   const before = Date.now();
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
   );
   await findByText(/Snooze/, {}, { timeout: 20000 });
   fireEvent.press(getByText(/Snooze/));
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+  await waitFor(() => expect(navigation.routes()).toEqual(JOURNEYS_ONLY), { timeout: 20000 });
 
   expect(notifee.cancelNotification).toHaveBeenCalledWith('arrival-7');
   expect(scheduleSnoozedAlert).toHaveBeenCalledTimes(1);
@@ -132,14 +145,14 @@ test('snoozing an arrival alarm cancels the notification, schedules a snoozed re
 });
 
 test('snoozing a GPS-loss alarm cancels the notification, schedules a snoozed re-alert, and returns to Current Journey', async () => {
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('gpsLoss');
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'gpsLoss' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'gpsLoss' } } as any} navigation={navigation as any} />
   );
   await findByText(/Snooze/, {}, { timeout: 20000 });
   fireEvent.press(getByText(/Snooze/));
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 7 }), {
+  await waitFor(() => expect(navigation.routes()).toEqual(BACK_ON_TRACKING), {
     timeout: 20000,
   });
   expect(notifee.cancelNotification).toHaveBeenCalledWith('gps-loss-7');
@@ -149,28 +162,28 @@ test('snoozing a GPS-loss alarm cancels the notification, schedules a snoozed re
 
 test('navigates to Journeys without showing the alarm when the journey cannot be found', async () => {
   (getJourneyById as jest.Mock).mockResolvedValue(null);
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('arrival');
   const { queryByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
   );
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+  await waitFor(() => expect(navigation.routes()).toEqual(JOURNEYS_ONLY), { timeout: 20000 });
   expect(queryByText('Dismiss')).toBeNull();
 });
 
 test('navigates to Journeys when the journey is no longer active (already completed elsewhere)', async () => {
   (getJourneyById as jest.Mock).mockResolvedValue({ ...journey, status: 'completed' });
-  const navigation = { replace: jest.fn() } as any;
-  render(<AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />);
+  const navigation = alarmOnTopOfTracking('arrival');
+  render(<AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />);
 
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+  await waitFor(() => expect(navigation.routes()).toEqual(JOURNEYS_ONLY), { timeout: 20000 });
 });
 
 test('shows an error and a working retry button when loading the journey fails', async () => {
   (getJourneyById as jest.Mock).mockRejectedValue(new Error('db unavailable'));
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('arrival');
   const { findByText, getByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
   );
 
   await findByText('Could not load this alarm. Please try again.', {}, { timeout: 20000 });
@@ -183,15 +196,15 @@ test('shows an error and a working retry button when loading the journey fails',
 
 test('shows an error and re-enables the buttons when dismiss fails, without navigating away', async () => {
   (notifee.cancelNotification as jest.Mock).mockRejectedValueOnce(new Error('native error'));
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('arrival');
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
   );
   await findByText('Dismiss', {}, { timeout: 20000 });
   fireEvent.press(getByText('Dismiss'));
 
   await findByText('Could not dismiss the alarm. Please try again.', {}, { timeout: 20000 });
-  expect(navigation.replace).not.toHaveBeenCalled();
+  expect(navigation.dispatch).not.toHaveBeenCalled();
   expect(finishJourney).not.toHaveBeenCalled();
 
   // Button re-enabled: pressing again retries (cancelNotification called a second time).
@@ -206,9 +219,9 @@ test('disables Snooze and Dismiss while a dismiss is in flight', async () => {
       resolveCancel = resolve;
     })
   );
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = alarmOnTopOfTracking('arrival');
   const { getByText, findByText } = render(
-    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation} />
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
   );
   await findByText('Dismiss', {}, { timeout: 20000 });
   fireEvent.press(getByText('Dismiss'));
@@ -222,5 +235,30 @@ test('disables Snooze and Dismiss while a dismiss is in flight', async () => {
   expect(scheduleSnoozedAlert).not.toHaveBeenCalled();
 
   resolveCancel();
-  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+  await waitFor(() => expect(navigation.routes()).toEqual(JOURNEYS_ONLY), { timeout: 20000 });
+});
+
+test('leaving a GPS-loss alarm with no tracking screen below replaces it with Current Journey (one instance)', async () => {
+  const navigation = createFakeStackNavigation([
+    { name: 'Journeys' },
+    { name: 'Alarm', params: { journeyId: 7, kind: 'gpsLoss' } },
+  ]);
+  const { getByText, findByText } = render(
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'gpsLoss' } } as any} navigation={navigation as any} />
+  );
+  await findByText(/Snooze/, {}, { timeout: 20000 });
+  fireEvent.press(getByText(/Snooze/));
+
+  await waitFor(() => expect(navigation.routes()).toEqual(BACK_ON_TRACKING), { timeout: 20000 });
+});
+
+test('a stale alarm opened from startup ([Journeys, Alarm]) resets to a single Journeys screen', async () => {
+  (getJourneyById as jest.Mock).mockResolvedValue(null);
+  const navigation = createFakeStackNavigation([
+    { name: 'Journeys' },
+    { name: 'Alarm', params: { journeyId: 7, kind: 'arrival' } },
+  ]);
+  render(<AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />);
+
+  await waitFor(() => expect(navigation.routes()).toEqual(JOURNEYS_ONLY), { timeout: 20000 });
 });

@@ -51,7 +51,7 @@ function makeNavigator(
     isReady: jest.fn(() => ready),
     getCurrentRoute: jest.fn(() => currentRoute),
     showAlarm: jest.fn(),
-    replaceCurrent: jest.fn(),
+    leaveAlarm: jest.fn(),
   };
 }
 
@@ -66,14 +66,14 @@ afterEach(() => {
 describe('background handler', () => {
   test('snooze action press snoozes the parsed alarm', async () => {
     const actions = makeActions();
-    await createBackgroundAlarmEventHandler(actions)(event(ACTION_PRESS, 'gps-loss-4', 'snooze'));
+    await createBackgroundAlarmEventHandler(actions, makeNavigator(undefined, false))(event(ACTION_PRESS, 'gps-loss-4', 'snooze'));
     expect(actions.snoozeAlarm).toHaveBeenCalledWith(4, 'gpsLoss');
     expect(actions.dismissAlarm).not.toHaveBeenCalled();
   });
 
   test('dismiss action press dismisses the parsed alarm', async () => {
     const actions = makeActions();
-    await createBackgroundAlarmEventHandler(actions)(event(ACTION_PRESS, 'arrival-12', 'dismiss'));
+    await createBackgroundAlarmEventHandler(actions, makeNavigator(undefined, false))(event(ACTION_PRESS, 'arrival-12', 'dismiss'));
     expect(actions.dismissAlarm).toHaveBeenCalledWith(12, 'arrival');
     expect(actions.snoozeAlarm).not.toHaveBeenCalled();
   });
@@ -83,20 +83,52 @@ describe('background handler', () => {
     ['a missing notification', event(ACTION_PRESS, undefined, 'dismiss')],
     ['an unknown action id', event(ACTION_PRESS, 'arrival-1', 'other')],
     ['a plain press', event(PRESS, 'arrival-1', 'default')],
+    ['an ACTION_PRESS default', event(ACTION_PRESS, 'arrival-1', 'default')],
     ['a delivery', event(DELIVERED, 'arrival-1')],
     ['a swipe-away', event(DISMISSED, 'arrival-1')],
-  ])('ignores %s', async (_label, e) => {
+  ])('ignores %s (headless, no ready navigator)', async (_label, e) => {
     const actions = makeActions();
-    await createBackgroundAlarmEventHandler(actions)(e);
+    await createBackgroundAlarmEventHandler(actions, makeNavigator(undefined, false))(e);
     expect(actions.snoozeAlarm).not.toHaveBeenCalled();
     expect(actions.dismissAlarm).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['PRESS', event(PRESS, 'gps-loss-4', 'default')],
+    ['ACTION_PRESS default', event(ACTION_PRESS, 'gps-loss-4', 'default')],
+  ])('warm start: %s opens the Alarm when the navigator is ready, without running an action', async (_l, e) => {
+    const actions = makeActions();
+    const nav = makeNavigator({ name: 'CurrentJourney', params: { journeyId: 4 } });
+    await createBackgroundAlarmEventHandler(actions, nav)(e);
+    expect(nav.showAlarm).toHaveBeenCalledWith({ journeyId: 4, kind: 'gpsLoss' });
+    expect(actions.snoozeAlarm).not.toHaveBeenCalled();
+    expect(actions.dismissAlarm).not.toHaveBeenCalled();
+  });
+
+  test('headless: PRESS with no ready navigator does not navigate', async () => {
+    const nav = makeNavigator(undefined, false);
+    await createBackgroundAlarmEventHandler(makeActions(), nav)(event(PRESS, 'gps-loss-4', 'default'));
+    expect(nav.showAlarm).not.toHaveBeenCalled();
+  });
+
+  test('warm start: PRESS of the Alarm already shown does not navigate again', async () => {
+    const nav = makeNavigator({ name: 'Alarm', params: { journeyId: 4, kind: 'gpsLoss' } });
+    await createBackgroundAlarmEventHandler(makeActions(), nav)(event(PRESS, 'gps-loss-4', 'default'));
+    expect(nav.showAlarm).not.toHaveBeenCalled();
+  });
+
+  test('action presses never navigate, even with a ready navigator', async () => {
+    const nav = makeNavigator({ name: 'Alarm', params: { journeyId: 4, kind: 'gpsLoss' } });
+    await createBackgroundAlarmEventHandler(makeActions(), nav)(event(ACTION_PRESS, 'gps-loss-4', 'snooze'));
+    expect(nav.showAlarm).not.toHaveBeenCalled();
+    expect(nav.leaveAlarm).not.toHaveBeenCalled();
   });
 
   test('never throws when the action fails; logs a warning instead', async () => {
     const actions = makeActions();
     actions.dismissAlarm.mockRejectedValue(new Error('db down'));
     await expect(
-      createBackgroundAlarmEventHandler(actions)(event(ACTION_PRESS, 'arrival-1', 'dismiss'))
+      createBackgroundAlarmEventHandler(actions, makeNavigator(undefined, false))(event(ACTION_PRESS, 'arrival-1', 'dismiss'))
     ).resolves.toBeUndefined();
     expect(warnSpy).toHaveBeenCalled();
   });
@@ -109,20 +141,20 @@ describe('foreground handler', () => {
     await createForegroundAlarmEventHandler({ actions, navigator: nav })(event(ACTION_PRESS, 'arrival-3', 'dismiss'));
 
     expect(actions.dismissAlarm).toHaveBeenCalledWith(3, 'arrival');
-    expect(nav.replaceCurrent).toHaveBeenCalledWith({ name: 'Journeys' });
+    expect(nav.leaveAlarm).toHaveBeenCalledWith({ journeyId: 3, kind: 'arrival' });
     expect((actions.dismissAlarm as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
-      (nav.replaceCurrent as jest.Mock).mock.invocationCallOrder[0]
+      (nav.leaveAlarm as jest.Mock).mock.invocationCallOrder[0]
     );
     expect(nav.showAlarm).not.toHaveBeenCalled();
   });
 
-  test('snooze from the notification while on that GPS-loss alarm returns to Current Journey', async () => {
+  test('snooze from the notification while on that GPS-loss alarm leaves that Alarm', async () => {
     const actions = makeActions();
     const nav = makeNavigator({ name: 'Alarm', params: { journeyId: 3, kind: 'gpsLoss' } });
     await createForegroundAlarmEventHandler({ actions, navigator: nav })(event(ACTION_PRESS, 'gps-loss-3', 'snooze'));
 
     expect(actions.snoozeAlarm).toHaveBeenCalledWith(3, 'gpsLoss');
-    expect(nav.replaceCurrent).toHaveBeenCalledWith({ name: 'CurrentJourney', params: { journeyId: 3 } });
+    expect(nav.leaveAlarm).toHaveBeenCalledWith({ journeyId: 3, kind: 'gpsLoss' });
   });
 
   test.each([
@@ -135,7 +167,7 @@ describe('foreground handler', () => {
     await createForegroundAlarmEventHandler({ actions, navigator: nav })(event(ACTION_PRESS, 'arrival-3', 'dismiss'));
 
     expect(actions.dismissAlarm).toHaveBeenCalledWith(3, 'arrival');
-    expect(nav.replaceCurrent).not.toHaveBeenCalled();
+    expect(nav.leaveAlarm).not.toHaveBeenCalled();
     expect(nav.showAlarm).not.toHaveBeenCalled();
   });
 
@@ -146,7 +178,7 @@ describe('foreground handler', () => {
     await expect(
       createForegroundAlarmEventHandler({ actions, navigator: nav })(event(ACTION_PRESS, 'arrival-3', 'snooze'))
     ).resolves.toBeUndefined();
-    expect(nav.replaceCurrent).not.toHaveBeenCalled();
+    expect(nav.leaveAlarm).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalled();
   });
 
@@ -155,7 +187,7 @@ describe('foreground handler', () => {
     const nav = makeNavigator(undefined, false);
     await createForegroundAlarmEventHandler({ actions, navigator: nav })(event(ACTION_PRESS, 'low-battery-3', 'dismiss'));
     expect(actions.dismissAlarm).toHaveBeenCalledWith(3, 'lowBattery');
-    expect(nav.replaceCurrent).not.toHaveBeenCalled();
+    expect(nav.leaveAlarm).not.toHaveBeenCalled();
   });
 
   test.each([

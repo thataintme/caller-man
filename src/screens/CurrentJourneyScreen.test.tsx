@@ -46,7 +46,7 @@ test('cancelling the journey marks it cancelled, stops tracking, and navigates h
   jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
     buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
   });
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
   fireEvent.press(getByText('Cancel Journey'));
@@ -63,7 +63,7 @@ test('cancels in order: stopTracking, then finishJourney, then pruneFixesForJour
   jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
     buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
   });
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
   fireEvent.press(getByText('Cancel Journey'));
@@ -81,7 +81,7 @@ test('cancelling silences every alert id for the journey (incl. pending snoozes)
   jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
     buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
   });
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
   fireEvent.press(getByText('Cancel Journey'));
@@ -101,7 +101,7 @@ test('shows a cancel error and re-enables Cancel Journey when finishJourney fail
   jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
     buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
   });
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
   fireEvent.press(getByText('Cancel Journey'));
@@ -117,7 +117,7 @@ test('shows a cancel error and re-enables Cancel Journey when finishJourney fail
 
 test('replaces to the Alarm screen when the active journey has already arrived', async () => {
   (getActiveJourney as jest.Mock).mockResolvedValue({ ...journey, arrivedAt: 123456 });
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
 
   await waitFor(
@@ -127,9 +127,24 @@ test('replaces to the Alarm screen when the active journey has already arrived',
   expect(navigation.replace).not.toHaveBeenCalledWith('Journeys');
 });
 
+// Fix round 1 (a): the 15s refresh keeps running while an Alarm is pushed on
+// top; an unfocused CurrentJourney must not replace itself, or the stack ends
+// up with two Alarm screens. useFocusEffect re-runs load() on refocus.
+test.each([
+  ['an arrived journey (would replace to Alarm)', { ...journey, arrivedAt: 123456 }],
+  ['no active journey (would replace to Journeys)', null],
+])('does not redirect while unfocused, for %s', async (_label, active) => {
+  (getActiveJourney as jest.Mock).mockResolvedValue(active);
+  const navigation = { replace: jest.fn(), isFocused: jest.fn(() => false) } as any;
+  render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
+
+  await waitFor(() => expect(navigation.isFocused).toHaveBeenCalled(), { timeout: 20000 });
+  expect(navigation.replace).not.toHaveBeenCalled();
+});
+
 test('navigates back to Journeys instead of rendering stale data when there is no active journey', async () => {
   (getActiveJourney as jest.Mock).mockResolvedValue(null);
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { queryByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
@@ -141,7 +156,7 @@ test('shows an error and a working retry button when loading the journey fails',
   // load() on every re-render (see JourneysScreen.test.tsx for the same
   // convention), so the rejection must persist until we're ready to recover.
   (getActiveJourney as jest.Mock).mockRejectedValue(new Error('db unavailable'));
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { findByText, getByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
 
   await findByText('Could not load the current journey. Please try again.', {}, { timeout: 20000 });
@@ -162,7 +177,7 @@ test('disables the Cancel Journey button while a cancel is in flight', async () 
   jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
     buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
   });
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
 
@@ -183,7 +198,7 @@ test('disables the Cancel Journey button while a cancel is in flight', async () 
 test('clears the periodic refresh interval on unmount', async () => {
   const setIntervalSpy = jest.spyOn(global, 'setInterval');
   const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { findByText, unmount } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
 
@@ -211,7 +226,7 @@ test('does not update state after unmount when a load resolves late', async () =
     })
   );
   const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
-  const navigation = { replace: jest.fn() } as any;
+  const navigation = { replace: jest.fn(), isFocused: () => true } as any;
   const { findByText, unmount } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Cancel Journey', {}, { timeout: 20000 });
 

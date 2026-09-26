@@ -1,4 +1,4 @@
-import notifee from '@notifee/react-native';
+import notifee, { InitialNotification } from '@notifee/react-native';
 import * as Location from 'expo-location';
 import { getDb } from '../db/expoSqliteClient';
 import { runMigrations } from '../db/migrations';
@@ -14,6 +14,26 @@ export type StartupRoute =
   | { name: 'CurrentJourney'; params: { journeyId: number } }
   | { name: 'Alarm'; params: { journeyId: number; kind: AlarmKind } };
 
+// notifee hands out the launching notification only once per launch, so the
+// first successful read is kept for the life of the JS context: a Retry after
+// a later startup failure (App's R8 error screen) must still see it.
+let initialNotificationRead: Promise<InitialNotification | null> | null = null;
+
+function readInitialNotificationOnce(): Promise<InitialNotification | null> {
+  if (!initialNotificationRead) {
+    initialNotificationRead = notifee.getInitialNotification().catch((error) => {
+      initialNotificationRead = null; // a failed read isn't cached; Retry reads again
+      throw error;
+    });
+  }
+  return initialNotificationRead;
+}
+
+/** Test hook: forget the cached launching notification. */
+export function resetInitialNotificationCacheForTests(): void {
+  initialNotificationRead = null;
+}
+
 /**
  * If the app was launched by an alarm notification (tap or full-screen
  * intent) for a journey that is still active, the Alarm to open. A failed
@@ -23,7 +43,7 @@ export type StartupRoute =
 async function alarmFromInitialNotification(db: Db): Promise<StartupRoute | null> {
   let notificationId: string | undefined;
   try {
-    const initial = await notifee.getInitialNotification();
+    const initial = await readInitialNotificationOnce();
     notificationId = initial?.notification.id;
   } catch (error) {
     console.warn('Could not read the notification that launched the app', error);

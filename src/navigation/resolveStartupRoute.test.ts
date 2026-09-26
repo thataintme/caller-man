@@ -1,6 +1,6 @@
 import notifee from '@notifee/react-native';
 import * as Location from 'expo-location';
-import { resolveStartupRoute } from './resolveStartupRoute';
+import { resolveStartupRoute, resetInitialNotificationCacheForTests } from './resolveStartupRoute';
 import { getDb } from '../db/expoSqliteClient';
 import { runMigrations } from '../db/migrations';
 import { getActiveJourney, getJourneyById } from '../db/journeysRepo';
@@ -45,6 +45,7 @@ function initialNotification(id: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetInitialNotificationCacheForTests();
   (getDb as jest.Mock).mockResolvedValue(DB);
   (runMigrations as jest.Mock).mockResolvedValue(undefined);
   (resumeMonitorsIfActive as jest.Mock).mockResolvedValue(undefined);
@@ -103,6 +104,7 @@ test('a failing getInitialNotification falls through to the normal route', async
   const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
   (notifee.getInitialNotification as jest.Mock).mockRejectedValue(new Error('native'));
   await expect(resolveStartupRoute()).resolves.toEqual({ name: 'Journeys' });
+  expect(warn).toHaveBeenCalled();
   warn.mockRestore();
 });
 
@@ -138,4 +140,28 @@ test('propagates a migration failure (App shows it with Retry)', async () => {
   (runMigrations as jest.Mock).mockRejectedValue(new Error('disk full'));
   await expect(resolveStartupRoute()).rejects.toThrow('disk full');
   expect(resumeMonitorsIfActive).not.toHaveBeenCalled();
+});
+
+test('a Retry after a later startup failure reuses the launching alarm notification (notifee returns it only once)', async () => {
+  (notifee.getInitialNotification as jest.Mock)
+    .mockResolvedValueOnce({ notification: { id: 'arrival-4' }, pressAction: { id: 'default' } })
+    .mockResolvedValue(null);
+  (getJourneyById as jest.Mock).mockRejectedValueOnce(new Error('db busy')).mockResolvedValue(base);
+
+  await expect(resolveStartupRoute()).rejects.toThrow('db busy');
+  await expect(resolveStartupRoute()).resolves.toEqual({ name: 'Alarm', params: { journeyId: 4, kind: 'arrival' } });
+  expect(notifee.getInitialNotification).toHaveBeenCalledTimes(1);
+});
+
+test('a failed getInitialNotification read is not cached, so Retry reads it again', async () => {
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  (notifee.getInitialNotification as jest.Mock)
+    .mockRejectedValueOnce(new Error('native'))
+    .mockResolvedValue({ notification: { id: 'arrival-4' }, pressAction: { id: 'default' } });
+  (getJourneyById as jest.Mock).mockResolvedValue(base);
+
+  await expect(resolveStartupRoute()).resolves.toEqual({ name: 'Journeys' });
+  await expect(resolveStartupRoute()).resolves.toEqual({ name: 'Alarm', params: { journeyId: 4, kind: 'arrival' } });
+  expect(notifee.getInitialNotification).toHaveBeenCalledTimes(2);
+  warn.mockRestore();
 });

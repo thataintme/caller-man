@@ -1,13 +1,17 @@
 import { Event, EventType } from '@notifee/react-native';
 import { AlarmKind, parseAlarmNotificationId } from './alarmManager';
-import { dismissAlarm, snoozeAlarm, nextRouteAfterAlarm, RouteAfterAlarm } from './alarmActions';
+import { dismissAlarm, snoozeAlarm } from './alarmActions';
+import { alarmNavigator } from '../navigation/navigationRef';
 
 /**
  * notifee event handling for alarm notifications (spec §8/§9).
  *
  * - Background (registered at module scope in index.ts, so it also runs in
  *   headless JS when the app is killed): Snooze/Dismiss action presses run
- *   the action. No navigation — there is no UI.
+ *   the action, without navigating. A tap on the alarm (PRESS / 'default')
+ *   opens the Alarm screen only on a warm start, i.e. when the app's
+ *   navigator is alive (isReady); in headless JS it isn't, so it's a no-op
+ *   and cold start is handled by resolveStartupRoute.
  * - Foreground (registered by App while mounted): the same actions, plus
  *   keeping the navigator in sync — leave an Alarm screen whose alarm was
  *   just handled from the notification, and open the Alarm screen when an
@@ -26,10 +30,10 @@ export interface AlarmActionHandlers {
 export interface AlarmNavigator {
   isReady(): boolean;
   getCurrentRoute(): { name: string; params?: object } | undefined;
-  /** Put the Alarm screen for this alarm on top of the stack. */
-  showAlarm(params: { journeyId: number; kind: AlarmKind }): void;
-  /** Replace the current route (used to leave a handled Alarm screen). */
-  replaceCurrent(route: RouteAfterAlarm): void;
+  /** Show the Alarm screen for this alarm (see navigation/alarmNavigation). */
+  showAlarm(target: { journeyId: number; kind: AlarmKind }): void;
+  /** Leave the Alarm screen for this alarm after it was handled. */
+  leaveAlarm(target: { journeyId: number; kind: AlarmKind }): void;
 }
 
 type AlarmTarget = { journeyId: number; kind: AlarmKind };
@@ -67,6 +71,20 @@ async function runAlarmAction(event: Event, actions: AlarmActionHandlers): Promi
   return target;
 }
 
+/** A tap on the alarm notification itself (body or full-screen intent). */
+function isOpenAlarmEvent(event: Event): boolean {
+  return (
+    event.type === EventType.PRESS ||
+    (event.type === EventType.ACTION_PRESS && event.detail.pressAction?.id === 'default')
+  );
+}
+
+function openAlarmIfReady(event: Event, navigator: AlarmNavigator): void {
+  const target = alarmTargetOf(event);
+  if (!target || !navigator.isReady() || isShowingAlarm(navigator, target)) return;
+  navigator.showAlarm(target);
+}
+
 function isShowingAlarm(navigator: AlarmNavigator, target: AlarmTarget): boolean {
   const route = navigator.getCurrentRoute();
   if (!route || route.name !== 'Alarm') return false;
@@ -75,10 +93,15 @@ function isShowingAlarm(navigator: AlarmNavigator, target: AlarmTarget): boolean
 }
 
 export function createBackgroundAlarmEventHandler(
-  actions: AlarmActionHandlers = defaultActions
+  actions: AlarmActionHandlers = defaultActions,
+  navigator: AlarmNavigator = alarmNavigator
 ): (event: Event) => Promise<void> {
   return async (event) => {
     try {
+      if (isOpenAlarmEvent(event)) {
+        openAlarmIfReady(event, navigator);
+        return;
+      }
       await runAlarmAction(event, actions);
     } catch (error) {
       console.warn('Background alarm event handling failed', error);
@@ -90,25 +113,23 @@ export const handleBackgroundAlarmEvent = createBackgroundAlarmEventHandler();
 
 export function createForegroundAlarmEventHandler({
   actions = defaultActions,
-  navigator,
+  navigator = alarmNavigator,
 }: {
   actions?: AlarmActionHandlers;
-  navigator: AlarmNavigator;
-}): (event: Event) => Promise<void> {
+  navigator?: AlarmNavigator;
+} = {}): (event: Event) => Promise<void> {
   return async (event) => {
     try {
-      if (event.type === EventType.ACTION_PRESS) {
-        const handled = await runAlarmAction(event, actions);
-        if (handled && navigator.isReady() && isShowingAlarm(navigator, handled)) {
-          navigator.replaceCurrent(nextRouteAfterAlarm(handled.kind, handled.journeyId));
-        }
+      if (isOpenAlarmEvent(event) || event.type === EventType.DELIVERED) {
+        openAlarmIfReady(event, navigator);
         return;
       }
 
-      if (event.type === EventType.PRESS || event.type === EventType.DELIVERED) {
-        const target = alarmTargetOf(event);
-        if (!target || !navigator.isReady() || isShowingAlarm(navigator, target)) return;
-        navigator.showAlarm(target);
+      if (event.type === EventType.ACTION_PRESS) {
+        const handled = await runAlarmAction(event, actions);
+        if (handled && navigator.isReady() && isShowingAlarm(navigator, handled)) {
+          navigator.leaveAlarm(handled);
+        }
       }
     } catch (error) {
       console.warn('Foreground alarm event handling failed', error);

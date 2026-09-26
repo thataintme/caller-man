@@ -44,6 +44,9 @@ export async function dismissAlarm(journeyId: number, kind: AlarmKind): Promise<
   const journey = await loadActiveJourneyOrSilence(journeyId);
   if (!journey) return;
 
+  // For arrival this id is cancelled again by cancelAllAlertsForJourney below;
+  // the double cancel is intentional and harmless (keeps one uniform
+  // "silence this alarm first" step for every kind).
   await notifee.cancelNotification(alarmNotificationId(kind, journeyId));
   if (kind !== 'arrival') return;
 

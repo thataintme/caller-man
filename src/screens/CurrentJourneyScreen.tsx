@@ -50,6 +50,12 @@ export function CurrentJourneyScreen({ navigation }: Props) {
       const active = await getActiveJourney(db);
       if (!mountedRef.current) return;
 
+      // Only the focused screen may redirect: the periodic refresh keeps
+      // running while an Alarm is pushed on top, and replacing from
+      // underneath would leave two Alarm screens on the stack. useFocusEffect
+      // re-runs load() when this screen is focused again.
+      if ((!active || active.arrivedAt) && !navigation.isFocused()) return;
+
       if (!active) {
         // Finished (completed/cancelled) elsewhere since we last checked —
         // don't render stale tracking data, just go back to the list.

@@ -5,7 +5,8 @@ import { RootStackParamList } from '../navigation/types';
 import { getDb } from '../db/expoSqliteClient';
 import { getJourneyById } from '../db/journeysRepo';
 import { Journey } from '../types/journey';
-import { dismissAlarm, snoozeAlarm, nextRouteAfterAlarm } from '../alarm/alarmActions';
+import { dismissAlarm, snoozeAlarm } from '../alarm/alarmActions';
+import { leaveAlarm, resetToJourneys } from '../navigation/alarmNavigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Alarm'>;
 type Kind = Props['route']['params']['kind'];
@@ -42,7 +43,7 @@ export function AlarmScreen({ route, navigation }: Props) {
       // dismiss) — nothing to show, don't loop back to an alarm that no
       // longer applies.
       if (!found || found.status !== 'active') {
-        navigation.replace('Journeys');
+        resetToJourneys(navigation);
         return;
       }
 
@@ -59,12 +60,7 @@ export function AlarmScreen({ route, navigation }: Props) {
   }, [load]);
 
   function goToNextScreen() {
-    const next = nextRouteAfterAlarm(kind, journeyId);
-    if (next.name === 'Journeys') {
-      navigation.replace('Journeys');
-    } else {
-      navigation.replace('CurrentJourney', next.params);
-    }
+    leaveAlarm(navigation, kind, journeyId);
   }
 
   async function handleDismiss() {
