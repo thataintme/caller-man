@@ -15,7 +15,9 @@ import { clampRadiusToCap, maxAllowedRadiusM } from '../geo/radiusCap';
 import { reconcileMinMaxFreq } from '../geo/pollFreqOrdering';
 import { maxAllowedBatteryCutoffPct } from '../geo/batteryCutoff';
 import { startTracking, stopTracking } from '../location/locationService';
+import { searchDestination, GeocodeResult } from '../location/geocode';
 import { RADIUS_MIN_M, RADIUS_MAX_M, POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN } from '../constants/limits';
+import { MAPBOX_ACCESS_TOKEN, isMapboxTokenConfigured } from '../constants/mapbox';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'NewJourney'>;
 
@@ -71,6 +73,11 @@ export function NewJourneyScreen({ navigation }: Props) {
   // prematurely rejected keystroke-by-keystroke.
   const [destLatText, setDestLatText] = useState(String(PLACEHOLDER_DEST_LAT));
   const [destLngText, setDestLngText] = useState(String(PLACEHOLDER_DEST_LNG));
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [selectedPlaceName, setSelectedPlaceName] = useState<string | null>(null);
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
   const [radiusM, setRadiusM] = useState(0);
@@ -175,6 +182,32 @@ export function NewJourneyScreen({ navigation }: Props) {
     setRadiusM((current) => clampRadiusToCap(current, newDistance));
   }
 
+  function selectSearchResult(result: GeocodeResult) {
+    handleDestinationChange(result.lat, result.lng);
+    setSelectedPlaceName(result.placeName);
+  }
+
+  async function handleSearch() {
+    const query = searchQuery.trim();
+    if (!query || !isMapboxTokenConfigured() || searching) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const results = await searchDestination(query, MAPBOX_ACCESS_TOKEN);
+      setSearchResults(results.slice(0, 5));
+      if (results.length === 0) {
+        setSearchError('No places found.');
+      } else {
+        selectSearchResult(results[0]);
+      }
+    } catch {
+      setSearchResults([]);
+      setSearchError("Couldn't search right now. Check your connection and try again.");
+    } finally {
+      setSearching(false);
+    }
+  }
+
   function commitDestLat() {
     const parsed = parseCoordinate(destLatText);
     if (parsed !== null && parsed >= -90 && parsed <= 90) {
@@ -271,6 +304,8 @@ export function NewJourneyScreen({ navigation }: Props) {
     navigation.replace('CurrentJourney', { journeyId: journey.id });
   }
 
+  const tokenConfigured = isMapboxTokenConfigured();
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {activeJourneyBlocked && (
@@ -282,6 +317,44 @@ export function NewJourneyScreen({ navigation }: Props) {
       {createError !== null && <Text style={styles.errorText}>{createError}</Text>}
 
       <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Journey Name" placeholderTextColor="#6b7280" />
+
+      <View style={styles.searchRow}>
+        <TextInput
+          style={[styles.input, styles.searchInput]}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onSubmitEditing={handleSearch}
+          returnKeyType="search"
+          placeholder="e.g. Heathrow Terminal 5"
+          placeholderTextColor="#6b7280"
+        />
+        <Pressable
+          style={styles.goButton}
+          onPress={handleSearch}
+          disabled={!tokenConfigured || searching}
+          testID="searchGoButton"
+        >
+          <Text style={styles.goButtonText}>{searching ? '…' : 'Go'}</Text>
+        </Pressable>
+      </View>
+      {!tokenConfigured && (
+        <Text style={styles.searchHint}>Destination search needs a Mapbox token.</Text>
+      )}
+      {searchError !== null && <Text style={styles.errorText}>{searchError}</Text>}
+      {selectedPlaceName !== null && <Text style={styles.selectedPlace}>{selectedPlaceName}</Text>}
+      {searchResults.length > 0 && (
+        <View style={styles.resultsList}>
+          {searchResults.map((result, index) => (
+            <Pressable
+              key={`${result.lat}-${result.lng}-${index}`}
+              style={styles.resultItem}
+              onPress={() => selectSearchResult(result)}
+            >
+              <Text style={styles.resultText}>{result.placeName}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       <Mapbox.MapView
         style={styles.map}
@@ -359,6 +432,15 @@ const styles = StyleSheet.create({
   field: { marginVertical: 12 },
   label: { color: '#e5e7eb', marginBottom: 6 },
   input: { borderWidth: 1, borderColor: '#374151', borderRadius: 6, padding: 8, color: '#fff', marginBottom: 12 },
+  searchRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  searchInput: { flex: 1, marginBottom: 0 },
+  goButton: { backgroundColor: '#10b981', paddingHorizontal: 16, justifyContent: 'center', borderRadius: 6 },
+  goButtonText: { color: '#04140d', fontWeight: '700' },
+  searchHint: { color: '#9ca3af', marginBottom: 12 },
+  selectedPlace: { color: '#9ca3af', marginBottom: 8 },
+  resultsList: { marginBottom: 12 },
+  resultItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#374151' },
+  resultText: { color: '#e5e7eb' },
   map: { height: 220, borderRadius: 10, marginBottom: 12 },
   pin: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#ef4444', borderWidth: 2, borderColor: '#fff' },
   coordRow: { flexDirection: 'row', gap: 10 },
