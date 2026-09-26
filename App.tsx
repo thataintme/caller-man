@@ -2,11 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { DarkTheme, InitialState, NavigationContainer } from '@react-navigation/native';
 import notifee from '@notifee/react-native';
+import Mapbox from '@rnmapbox/maps';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { resolveStartupRoute } from './src/navigation/resolveStartupRoute';
 import { initialNavigationState } from './src/navigation/initialNavigationState';
 import { navigationRef, alarmNavigator } from './src/navigation/navigationRef';
 import { createForegroundAlarmEventHandler } from './src/alarm/alarmEvents';
+import { MAPBOX_ACCESS_TOKEN } from './src/constants/mapbox';
+
+Mapbox.setAccessToken(MAPBOX_ACCESS_TOKEN);
 
 type Startup = { status: 'loading' } | { status: 'error' } | { status: 'ready'; initialState: InitialState };
 
