@@ -36,5 +36,7 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders
+# generated native folders (Continuous Native Generation: regenerated from
+# app.json + plugins/ by `npx expo prebuild`; never hand-edit or commit them)
 /ios
+/android

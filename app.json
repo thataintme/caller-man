@@ -13,6 +13,7 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
+        "ACCESS_NOTIFICATION_POLICY",
         "SCHEDULE_EXACT_ALARM",
         "USE_EXACT_ALARM",
         "USE_FULL_SCREEN_INTENT",
@@ -23,12 +24,7 @@
     "plugins": [
       "expo-location",
       "expo-task-manager",
-      [
-        "@rnmapbox/maps",
-        {
-          "RNMapboxMapsDownloadToken": "REPLACE_WITH_YOUR_MAPBOX_DOWNLOAD_TOKEN"
-        }
-      ],
+      "@rnmapbox/maps",
       [
         "expo-build-properties",
         {
@@ -38,7 +34,8 @@
         }
       ],
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "./plugins/withAlarmActivity"
     ]
   }
 }

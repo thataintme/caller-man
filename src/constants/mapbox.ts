@@ -1,10 +1,14 @@
 // Runtime *public* access token (`pk.…`) used by the Mapbox SDK and the
-// geocoding search. This is a different credential from the *download*
-// token (`sk.…`) already placed in app.json's @rnmapbox/maps plugin config
-// (Task 2) — Mapbox issues both from the same account, for different
-// purposes. The real token comes from the gitignored .env.local file as
-// EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN; the placeholder below is only the
+// geocoding search. The real token comes from the gitignored .env.local file
+// as EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN; the placeholder below is only the
 // fallback when that isn't set. Never invent or hardcode a real token here.
+//
+// No *download* token (`sk.…`) is needed to build: @rnmapbox/maps 10.3.x's
+// config plugin adds Mapbox's Maven repo without authentication (Mapbox
+// dropped the download-token requirement). If a build ever does need one,
+// supply it outside the repo — the RNMAPBOX_MAPS_DOWNLOAD_TOKEN environment
+// variable, or MAPBOX_DOWNLOADS_TOKEN in ~/.gradle/gradle.properties — never
+// in app.json or anything else that is committed.
 export const MAPBOX_ACCESS_TOKEN =
   process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? 'REPLACE_WITH_YOUR_MAPBOX_PUBLIC_ACCESS_TOKEN';
 
