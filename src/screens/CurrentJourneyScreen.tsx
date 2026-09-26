@@ -12,6 +12,7 @@ import { haversineDistanceM } from '../geo/haversine';
 import { averageSpeedMps, estimateEta } from '../geo/estimation';
 import { circlePolygon } from '../geo/circlePolygon';
 import { stopTracking } from '../location/locationService';
+import { cancelAllAlertsForJourney } from '../alarm/alarmManager';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CurrentJourney'>;
 
@@ -133,6 +134,9 @@ export function CurrentJourneyScreen({ navigation }: Props) {
     setCancelError(null);
     try {
       await stopTracking();
+      // Silence any displayed or pending snoozed alert for this journey
+      // before it's marked finished, so nothing rings after cancellation.
+      await cancelAllAlertsForJourney(journey.id);
       const db = await getDb();
       await finishJourney(db, journey.id, 'cancelled');
       await pruneFixesForJourney(db, journey.id);

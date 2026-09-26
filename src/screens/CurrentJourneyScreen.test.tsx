@@ -4,6 +4,7 @@ import { CurrentJourneyScreen, REFRESH_INTERVAL_MS } from './CurrentJourneyScree
 import { getActiveJourney, finishJourney } from '../db/journeysRepo';
 import { getRecentFixes, pruneFixesForJourney } from '../db/locationLogRepo';
 import { stopTracking } from '../location/locationService';
+import notifee from '@notifee/react-native';
 
 jest.setTimeout(45000);
 
@@ -20,6 +21,7 @@ jest.mock('../location/locationService');
 jest.mock('@notifee/react-native', () => ({
   createChannel: jest.fn().mockResolvedValue('caller-man-alarm'),
   displayNotification: jest.fn().mockResolvedValue('notif-id'),
+  cancelAllNotifications: jest.fn().mockResolvedValue(undefined),
   AndroidImportance: { HIGH: 4 },
   AndroidVisibility: { PUBLIC: 1 },
   AndroidCategory: { ALARM: 'alarm' },
@@ -73,6 +75,25 @@ test('cancels in order: stopTracking, then finishJourney, then pruneFixesForJour
   const pruneOrder = (pruneFixesForJourney as jest.Mock).mock.invocationCallOrder[0];
   expect(stopOrder).toBeLessThan(finishOrder);
   expect(finishOrder).toBeLessThan(pruneOrder);
+});
+
+test('cancelling silences every alert id for the journey (incl. pending snoozes) before finishing it', async () => {
+  jest.spyOn(Alert, 'alert').mockImplementation((_title, _msg, buttons) => {
+    buttons?.find((b) => b.text === 'Cancel journey')?.onPress?.();
+  });
+  const navigation = { replace: jest.fn() } as any;
+  const { getByText, findByText } = render(<CurrentJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Cancel Journey', {}, { timeout: 20000 });
+  fireEvent.press(getByText('Cancel Journey'));
+
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 20000 });
+
+  expect(notifee.cancelAllNotifications).toHaveBeenCalledTimes(1);
+  const ids = (notifee.cancelAllNotifications as jest.Mock).mock.calls[0][0] as string[];
+  expect([...ids].sort()).toEqual(['arrival-5', 'gps-loss-5', 'low-battery-5']);
+  const cancelAlertsOrder = (notifee.cancelAllNotifications as jest.Mock).mock.invocationCallOrder[0];
+  const finishOrder = (finishJourney as jest.Mock).mock.invocationCallOrder[0];
+  expect(cancelAlertsOrder).toBeLessThan(finishOrder);
 });
 
 test('shows a cancel error and re-enables Cancel Journey when finishJourney fails partway through', async () => {

@@ -49,6 +49,42 @@ export function alarmNotificationId(kind: AlarmKind, journeyId: number): string 
   }
 }
 
+const ALARM_ID_PATTERN = /^(arrival|gps-loss|low-battery)-([1-9]\d*)$/;
+
+const KIND_BY_ID_PREFIX: Record<string, AlarmKind> = {
+  arrival: 'arrival',
+  'gps-loss': 'gpsLoss',
+  'low-battery': 'lowBattery',
+};
+
+/**
+ * Inverse of alarmNotificationId. Returns null for any id that isn't one of
+ * ours (e.g. expo-location's foreground-service notification), so event
+ * handlers can safely ignore unrelated notifications.
+ */
+export function parseAlarmNotificationId(
+  id: string | undefined | null
+): { kind: AlarmKind; journeyId: number } | null {
+  if (!id) return null;
+  const match = ALARM_ID_PATTERN.exec(id);
+  if (!match) return null;
+  const journeyId = Number(match[2]);
+  if (!Number.isSafeInteger(journeyId)) return null;
+  return { kind: KIND_BY_ID_PREFIX[match[1]], journeyId };
+}
+
+const ALL_ALARM_KINDS: AlarmKind[] = ['arrival', 'gpsLoss', 'lowBattery'];
+
+/**
+ * Cancels every alert id for a journey — displayed or pending snoozed
+ * trigger (on Android, cancelAllNotifications(ids) cancels both types, same
+ * as cancelNotification does for a single id) — so nothing can ring after
+ * the journey has ended.
+ */
+export async function cancelAllAlertsForJourney(journeyId: number): Promise<void> {
+  await notifee.cancelAllNotifications(ALL_ALARM_KINDS.map((kind) => alarmNotificationId(kind, journeyId)));
+}
+
 function alarmContent(kind: AlarmKind, journey: Journey): { title: string; body: string } {
   switch (kind) {
     case 'arrival':

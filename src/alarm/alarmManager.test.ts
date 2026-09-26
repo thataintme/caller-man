@@ -1,5 +1,14 @@
 import notifee from '@notifee/react-native';
-import { triggerAlarm, triggerGpsLossAlert, triggerLowBatteryAlert, scheduleSnoozedAlert } from './alarmManager';
+import {
+  triggerAlarm,
+  triggerGpsLossAlert,
+  triggerLowBatteryAlert,
+  scheduleSnoozedAlert,
+  alarmNotificationId,
+  parseAlarmNotificationId,
+  cancelAllAlertsForJourney,
+  AlarmKind,
+} from './alarmManager';
 import { Journey } from '../types/journey';
 
 jest.mock('@notifee/react-native', () => ({
@@ -7,6 +16,7 @@ jest.mock('@notifee/react-native', () => ({
   displayNotification: jest.fn().mockResolvedValue('notif-id'),
   createTriggerNotification: jest.fn().mockResolvedValue('notif-id'),
   getNotificationSettings: jest.fn(),
+  cancelAllNotifications: jest.fn().mockResolvedValue(undefined),
   AndroidImportance: { HIGH: 4 },
   AndroidVisibility: { PUBLIC: 1 },
   AndroidCategory: { ALARM: 'alarm' },
@@ -154,4 +164,37 @@ test('scheduleSnoozedAlert falls back to a non-exact trigger when getNotificatio
     expect.objectContaining({ id: 'arrival-1' }),
     { type: 0, timestamp: atMs, alarmManager: { type: 1 } }
   );
+});
+
+describe('parseAlarmNotificationId', () => {
+  const kinds: AlarmKind[] = ['arrival', 'gpsLoss', 'lowBattery'];
+
+  test.each(kinds)('round-trips alarmNotificationId for kind %s', (kind) => {
+    expect(parseAlarmNotificationId(alarmNotificationId(kind, 42))).toEqual({ kind, journeyId: 42 });
+  });
+
+  test.each([
+    undefined,
+    '',
+    'arrival-',
+    'arrival-abc',
+    'arrival-1.5',
+    'arrival--3',
+    'arrival-0x10',
+    'gps-loss',
+    'low-battery-',
+    'foo-12',
+    'expo-location-foreground-service',
+    'arrival-12-extra',
+    ' arrival-12',
+  ])('returns null for non-alarm id %p', (id) => {
+    expect(parseAlarmNotificationId(id)).toBeNull();
+  });
+});
+
+test('cancelAllAlertsForJourney cancels the arrival, GPS-loss and low-battery ids for the journey', async () => {
+  await cancelAllAlertsForJourney(9);
+  expect(notifee.cancelAllNotifications).toHaveBeenCalledTimes(1);
+  const ids = (notifee.cancelAllNotifications as jest.Mock).mock.calls[0][0] as string[];
+  expect([...ids].sort()).toEqual(['arrival-9', 'gps-loss-9', 'low-battery-9']);
 });

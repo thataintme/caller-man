@@ -1,14 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import notifee from '@notifee/react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { getDb } from '../db/expoSqliteClient';
-import { getJourneyById, finishJourney } from '../db/journeysRepo';
-import { pruneFixesForJourney } from '../db/locationLogRepo';
+import { getJourneyById } from '../db/journeysRepo';
 import { Journey } from '../types/journey';
-import { stopTracking } from '../location/locationService';
-import { scheduleSnoozedAlert, alarmNotificationId } from '../alarm/alarmManager';
+import { dismissAlarm, snoozeAlarm, nextRouteAfterAlarm } from '../alarm/alarmActions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Alarm'>;
 type Kind = Props['route']['params']['kind'];
@@ -62,10 +59,11 @@ export function AlarmScreen({ route, navigation }: Props) {
   }, [load]);
 
   function goToNextScreen() {
-    if (kind === 'arrival') {
+    const next = nextRouteAfterAlarm(kind, journeyId);
+    if (next.name === 'Journeys') {
       navigation.replace('Journeys');
     } else {
-      navigation.replace('CurrentJourney', { journeyId });
+      navigation.replace('CurrentJourney', next.params);
     }
   }
 
@@ -74,16 +72,7 @@ export function AlarmScreen({ route, navigation }: Props) {
     setInFlight(true);
     setActionError(null);
     try {
-      // cancelNotification removes both the displayed notification and any
-      // pending trigger notification registered under this id.
-      await notifee.cancelNotification(alarmNotificationId(kind, journeyId));
-
-      if (kind === 'arrival') {
-        const db = await getDb();
-        await finishJourney(db, journeyId, 'completed');
-        await pruneFixesForJourney(db, journeyId);
-        await stopTracking();
-      }
+      await dismissAlarm(journeyId, kind);
       goToNextScreen();
     } catch {
       if (mountedRef.current) {
@@ -101,8 +90,7 @@ export function AlarmScreen({ route, navigation }: Props) {
     setInFlight(true);
     setActionError(null);
     try {
-      await notifee.cancelNotification(alarmNotificationId(kind, journeyId));
-      await scheduleSnoozedAlert(journey, kind, Date.now() + journey.snoozeMinutes * 60_000);
+      await snoozeAlarm(journeyId, kind);
       goToNextScreen();
     } catch {
       if (mountedRef.current) {

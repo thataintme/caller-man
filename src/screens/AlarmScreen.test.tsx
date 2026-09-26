@@ -20,6 +20,7 @@ jest.mock('../location/locationService');
 // the expected id the same way the screen does.
 jest.mock('../alarm/alarmManager', () => ({
   scheduleSnoozedAlert: jest.fn().mockResolvedValue(undefined),
+  cancelAllAlertsForJourney: jest.fn().mockResolvedValue(undefined),
   alarmNotificationId: (kind: string, journeyId: number) =>
     kind === 'arrival' ? `arrival-${journeyId}` : kind === 'gpsLoss' ? `gps-loss-${journeyId}` : `low-battery-${journeyId}`,
 }));
