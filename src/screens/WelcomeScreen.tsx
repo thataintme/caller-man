@@ -199,10 +199,11 @@ export function WelcomeScreen({ navigation }: Props) {
 
       <View style={styles.row}>
         <View style={styles.rowTextWrap}>
-          <Text style={styles.rowLabel}>Bypass Silent Mode & DND</Text>
+          <Text style={styles.rowLabel}>Sound Through Do Not Disturb</Text>
           <Text style={styles.rationale}>
-            Lets the arrival alarm sound even if your phone is on silent or Do Not Disturb. Android
-            doesn't let apps check or request this automatically — please enable it yourself.
+            Lets the alarm sound through Do Not Disturb once you allow it here — Android doesn't let
+            apps check or request this automatically. Silent or vibrate mode may still mute it; we're
+            still testing this on real devices.
           </Text>
         </View>
         <Pressable

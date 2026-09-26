@@ -130,3 +130,10 @@ test('does not double-navigate when the request path and the AppState re-check b
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('Journeys'), { timeout: 5000 });
   expect(navigation.replace).toHaveBeenCalledTimes(1);
 });
+
+test('I2: the DND row promises only what Android allows — sounding through DND once allowed, with silent/vibrate as a caveat', () => {
+  const { getByText, queryByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  expect(getByText(/sound through Do Not Disturb once you allow it/i)).toBeTruthy();
+  expect(getByText(/silent or vibrate mode may still mute it/i)).toBeTruthy();
+  expect(queryByText(/even if your phone is on silent/i)).toBeNull();
+});
