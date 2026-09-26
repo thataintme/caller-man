@@ -5,7 +5,9 @@ import { getDb } from '../db/expoSqliteClient';
 import { getActiveJourney, updateLastFixAt, markArrived } from '../db/journeysRepo';
 import { insertFix, getRecentFixes } from '../db/locationLogRepo';
 import { decideNextAction } from './decideNextAction';
-import { triggerAlarm } from '../alarm/alarmManager';
+import { triggerAlarm, armGpsLossDeadline, cancelGpsLossAlert } from '../alarm/alarmManager';
+import { gpsLossDeadlineMs } from './gpsWatchdog';
+import { locationUpdateOptions } from './locationUpdateOptions';
 
 // Only re-register location updates when the new poll interval differs from
 // the one currently applied by at least this fraction, to avoid restarting
@@ -71,23 +73,16 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     if (action.type === 'alarm') {
       // Fire the alarm before persisting arrival: if triggerAlarm throws
       // (e.g. a notification channel/permission failure), we must not mark
-      // arrived, or the next fix would early-return above and the watchdog
-      // would treat the journey as arrived — silently and permanently
-      // losing the alarm. triggerAlarm uses the stable notification id
-      // `arrival-${journey.id}`, so a retry on the next fix just updates
-      // the same notification rather than stacking duplicates.
+      // arrived, or the next fix would early-return above — silently and
+      // permanently losing the alarm. triggerAlarm uses the stable
+      // notification id `arrival-${journey.id}`, so a retry on the next fix
+      // just updates the same notification rather than stacking duplicates.
+      // (A failed attempt doesn't re-arm the GPS-loss deadline, so if every
+      // retry fails, the previous fix's deadline still wakes the user.)
       await triggerAlarm(journey);
+      // The journey has arrived: its GPS-loss deadline must not ring later.
+      await cancelGpsLossAlert(journey.id);
       await markArrived(db, journey.id, fix.recordedAt);
-      await stopLocationUpdatesIfStarted();
-      return;
-    }
-
-    // Re-read the active journey right before rescheduling: the journey may
-    // have been cancelled/finished, or arrived via another path, while the
-    // awaits above were in flight. Only reschedule if it's still the same,
-    // still-unarrived journey.
-    const stillActive = await getActiveJourney(db);
-    if (!stillActive || stillActive.id !== journey.id || stillActive.arrivedAt !== null) {
       await stopLocationUpdatesIfStarted();
       return;
     }
@@ -95,17 +90,32 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const shouldReschedule =
       lastAppliedIntervalMs === null ||
       Math.abs(action.nextIntervalMs - lastAppliedIntervalMs) / lastAppliedIntervalMs >= RESCHEDULE_THRESHOLD_RATIO;
+    const intervalAfterThisFixMs = shouldReschedule ? action.nextIntervalMs : (lastAppliedIntervalMs as number);
+
+    // GPS-loss dead-man's switch (spec §8.4, see gpsWatchdog): this fix
+    // pushes the deadline out, replacing the pending GPS-loss trigger (or a
+    // pending snooze of the GPS-loss alert — GPS is evidently back).
+    await armGpsLossDeadline(
+      journey,
+      gpsLossDeadlineMs({ ...journey, lastFixAt: fix.recordedAt }, intervalAfterThisFixMs)
+    );
+
+    // Re-read the active journey right before rescheduling: the journey may
+    // have been cancelled/finished, or arrived via another path, while the
+    // awaits above were in flight. Only reschedule if it's still the same,
+    // still-unarrived journey; otherwise undo the deadline just armed.
+    const stillActive = await getActiveJourney(db);
+    if (!stillActive || stillActive.id !== journey.id || stillActive.arrivedAt !== null) {
+      await cancelGpsLossAlert(journey.id);
+      await stopLocationUpdatesIfStarted();
+      return;
+    }
 
     if (shouldReschedule) {
-      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: action.nextIntervalMs,
-        foregroundService: {
-          notificationTitle: 'Caller Man — tracking active',
-          notificationBody: `Heading to ${journey.name}`,
-        },
-        pausesUpdatesAutomatically: false,
-      });
+      await Location.startLocationUpdatesAsync(
+        LOCATION_TASK_NAME,
+        locationUpdateOptions(journey.name, action.nextIntervalMs, action.remainingDistanceM)
+      );
       lastAppliedIntervalMs = action.nextIntervalMs;
     }
   } catch (taskError) {

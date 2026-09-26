@@ -34,6 +34,7 @@ jest.mock('../alarm/alarmManager', () => ({
 }));
 jest.mock('@notifee/react-native', () => ({
   cancelNotification: jest.fn().mockResolvedValue(undefined),
+  cancelDisplayedNotification: jest.fn().mockResolvedValue(undefined),
 }));
 
 // A real stack (StackRouter-backed fake) with this Alarm pushed over the
@@ -108,7 +109,9 @@ test('dismissing a GPS-loss alarm cancels the notification and returns to Curren
   await waitFor(() => expect(navigation.routes()).toEqual(BACK_ON_TRACKING), {
     timeout: 20000,
   });
-  expect(notifee.cancelNotification).toHaveBeenCalledWith('gps-loss-7');
+  // Only the displayed alert: gps-loss-7 is also the pending GPS-loss deadline (C1).
+  expect(notifee.cancelDisplayedNotification).toHaveBeenCalledWith('gps-loss-7');
+  expect(notifee.cancelNotification).not.toHaveBeenCalled();
   expect(finishJourney).not.toHaveBeenCalled();
   expect(pruneFixesForJourney).not.toHaveBeenCalled();
   expect(stopTracking).not.toHaveBeenCalled();

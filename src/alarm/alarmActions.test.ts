@@ -9,6 +9,7 @@ import { Journey } from '../types/journey';
 
 jest.mock('@notifee/react-native', () => ({
   cancelNotification: jest.fn().mockResolvedValue(undefined),
+  cancelDisplayedNotification: jest.fn().mockResolvedValue(undefined),
   cancelAllNotifications: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('../db/expoSqliteClient', () => ({ getDb: jest.fn().mockResolvedValue({}) }));
@@ -43,6 +44,7 @@ const cancelledIds = () =>
   [
     ...new Set([
       ...(notifee.cancelNotification as jest.Mock).mock.calls.map((c) => c[0] as string),
+      ...(notifee.cancelDisplayedNotification as jest.Mock).mock.calls.map((c) => c[0] as string),
       ...(notifee.cancelAllNotifications as jest.Mock).mock.calls.flatMap((c) => c[0] as string[]),
     ]),
   ].sort();
@@ -138,6 +140,22 @@ describe('dismissAlarm', () => {
     (removeAreaCacheForJourney as jest.Mock).mockRejectedValueOnce(new Error('boom'));
     await expect(dismissAlarm(7, 'arrival')).resolves.toBeUndefined();
     expect(finishJourney).toHaveBeenCalledWith(expect.anything(), 7, 'completed');
+  });
+
+  // C1: gps-loss-<id> doubles as the GPS-loss dead-man deadline trigger. A
+  // fresh fix may already have re-armed it while this alert was showing, so
+  // dismissing must only clear the displayed alert, never the pending
+  // deadline (else GPS monitoring silently stops until the next fix).
+  test('gpsLoss: clears only the displayed alert, keeping any pending GPS-loss deadline armed', async () => {
+    await dismissAlarm(7, 'gpsLoss');
+    expect(notifee.cancelDisplayedNotification).toHaveBeenCalledWith('gps-loss-7');
+    expect(notifee.cancelNotification).not.toHaveBeenCalled();
+    expect(notifee.cancelAllNotifications).not.toHaveBeenCalled();
+  });
+
+  test('lowBattery: cancels the notification (displayed or pending)', async () => {
+    await dismissAlarm(7, 'lowBattery');
+    expect(notifee.cancelNotification).toHaveBeenCalledWith('low-battery-7');
   });
 
   test.each([

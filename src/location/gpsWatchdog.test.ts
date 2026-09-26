@@ -1,4 +1,5 @@
-import { evaluateStaleFix } from './gpsWatchdog';
+import * as gpsWatchdog from './gpsWatchdog';
+import { gpsLossDeadlineMs } from './gpsWatchdog';
 import { Journey } from '../types/journey';
 
 const baseJourney: Journey = {
@@ -9,30 +10,26 @@ const baseJourney: Journey = {
   createdAt: 0, completedAt: null, arrivedAt: null,
 };
 
-test('no fix yet, within threshold of createdAt, is not stale', () => {
-  // min freq 5/min -> 12s interval; +2min grace = 132s threshold from createdAt (0)
-  expect(evaluateStaleFix({ ...baseJourney, lastFixAt: null }, 100_000)).toBe(false);
+describe('gpsLossDeadlineMs (spec §8.4: current poll interval + grace period)', () => {
+  test('is the last fix time + the current poll interval + the grace period', () => {
+    // 100s last fix + 12s interval + 2min grace
+    expect(gpsLossDeadlineMs(baseJourney, 12_000)).toBe(100_000 + 12_000 + 120_000);
+  });
+
+  test('uses the journey createdAt when there is no fix yet', () => {
+    const noFix = { ...baseJourney, lastFixAt: null, createdAt: 50_000 };
+    expect(gpsLossDeadlineMs(noFix, 12_000)).toBe(50_000 + 12_000 + 120_000);
+  });
+
+  test('uses the given (current) poll interval, not a fixed one', () => {
+    expect(gpsLossDeadlineMs(baseJourney, 3_000)).toBe(100_000 + 3_000 + 120_000);
+  });
+
+  test('scales with the journey grace period', () => {
+    expect(gpsLossDeadlineMs({ ...baseJourney, gpsLossGraceMinutes: 10 }, 12_000)).toBe(100_000 + 12_000 + 600_000);
+  });
 });
 
-test('no fix yet, past threshold since createdAt, is stale', () => {
-  expect(evaluateStaleFix({ ...baseJourney, lastFixAt: null }, 132_000 + 1)).toBe(true);
-});
-
-test('a recent fix is not stale', () => {
-  // min freq 5/min -> 12s interval; +2min grace = 132s threshold
-  expect(evaluateStaleFix(baseJourney, 100_000 + 60_000)).toBe(false);
-});
-
-test('a fix older than interval + grace period is stale', () => {
-  expect(evaluateStaleFix(baseJourney, 100_000 + 132_000 + 1)).toBe(true);
-});
-
-test('exactly at the threshold is not yet stale', () => {
-  expect(evaluateStaleFix(baseJourney, 100_000 + 132_000)).toBe(false);
-});
-
-test('an arrived journey is never stale, no matter how old the last fix is', () => {
-  const arrived = { ...baseJourney, arrivedAt: 100_000 };
-  expect(evaluateStaleFix(arrived, 100_000 + 132_000 + 1)).toBe(false);
-  expect(evaluateStaleFix({ ...arrived, lastFixAt: null }, 10_000_000)).toBe(false);
+test('no JS-timer watchdog remains (it never ticks while the app is paused/locked)', () => {
+  expect(Object.keys(gpsWatchdog).sort()).toEqual(['gpsLossDeadlineMs']);
 });

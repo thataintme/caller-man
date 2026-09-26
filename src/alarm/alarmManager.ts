@@ -150,13 +150,14 @@ async function resolveAlarmManagerConfig(): Promise<TimestampTriggerAlarmManager
 }
 
 /**
- * Schedules a snoozed re-alert at `atMs` using notifee's TimestampTrigger,
- * so it fires even if the app is backgrounded or killed in the meantime
- * (unlike a JS setTimeout, which is lost with the process). Reuses the same
- * stable id and presentation as the original alert of this kind, so
- * dismissing/snoozing it again from the Alarm screen works identically.
+ * Registers the alert of `kind` as a notifee TimestampTrigger at `atMs`, so
+ * it fires even if the app is backgrounded, locked or killed in the meantime
+ * (unlike a JS timer, which is paused/lost with the process). Reuses the same
+ * stable id and presentation as the displayed alert of this kind, so
+ * re-registering replaces any pending trigger under that id, and
+ * dismissing/snoozing it from the Alarm screen works identically.
  */
-export async function scheduleSnoozedAlert(journey: Journey, kind: AlarmKind, atMs: number): Promise<void> {
+async function scheduleAlertAt(journey: Journey, kind: AlarmKind, atMs: number): Promise<void> {
   await ensureAlarmChannel();
   const { title, body } = alarmContent(kind, journey);
   const alarmManagerConfig = await resolveAlarmManagerConfig();
@@ -173,4 +174,29 @@ export async function scheduleSnoozedAlert(journey: Journey, kind: AlarmKind, at
       alarmManager: alarmManagerConfig,
     }
   );
+}
+
+/** Schedules a snoozed re-alert of `kind` at `atMs` (see scheduleAlertAt). */
+export async function scheduleSnoozedAlert(journey: Journey, kind: AlarmKind, atMs: number): Promise<void> {
+  await scheduleAlertAt(journey, kind, atMs);
+}
+
+// notifee rejects a trigger timestamp that isn't in the future.
+const MIN_TRIGGER_LEAD_MS = 1_000;
+
+/**
+ * GPS-loss dead-man's switch (spec §8.4; see location/gpsWatchdog): arms the
+ * GPS-loss alert to fire at `atMs` unless it is re-armed further out (by the
+ * next fix) or cancelled (arrival / journey end) first. Uses the GPS-loss id,
+ * so re-arming replaces the pending deadline — or a pending snooze of the
+ * GPS-loss alert, which a fresh fix makes moot. A deadline that has already
+ * passed is clamped just into the future so the alert still fires promptly.
+ */
+export async function armGpsLossDeadline(journey: Journey, atMs: number): Promise<void> {
+  await scheduleAlertAt(journey, 'gpsLoss', Math.max(atMs, Date.now() + MIN_TRIGGER_LEAD_MS));
+}
+
+/** Cancels the journey's GPS-loss alert: the pending deadline/snooze and any displayed alert. */
+export async function cancelGpsLossAlert(journeyId: number): Promise<void> {
+  await notifee.cancelNotification(alarmNotificationId('gpsLoss', journeyId));
 }

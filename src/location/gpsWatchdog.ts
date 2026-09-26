@@ -1,38 +1,21 @@
-import { freqPerMinToIntervalMs } from '../geo/pollFrequency';
 import { Journey } from '../types/journey';
-import { getDb } from '../db/expoSqliteClient';
-import { getActiveJourney } from '../db/journeysRepo';
 
-const CHECK_INTERVAL_MS = 30_000;
-let watchdogHandle: ReturnType<typeof setInterval> | null = null;
-
-export function evaluateStaleFix(journey: Journey, nowMs: number): boolean {
-  if (journey.arrivedAt !== null) return false;
+/**
+ * GPS-loss watchdog (spec §8.4), as a dead-man's switch: instead of a JS
+ * timer polling for a stale fix (RN pauses JS timers while the app is
+ * backgrounded/locked, and a headless task process starts with them paused,
+ * so such a timer never ticks in the very situation it exists for), the
+ * GPS-loss alert is pre-scheduled as a notifee trigger at this deadline
+ * (alarmManager.armGpsLossDeadline). Every fresh fix re-arms it further out,
+ * replacing the pending trigger (same id); if fixes stop, it fires.
+ *
+ * Deadline = time of the last fix (or the journey's creation, before the
+ * first fix) + the current poll interval + the journey's grace period.
+ */
+export function gpsLossDeadlineMs(
+  journey: Pick<Journey, 'lastFixAt' | 'createdAt' | 'gpsLossGraceMinutes'>,
+  currentIntervalMs: number
+): number {
   const referenceAt = journey.lastFixAt ?? journey.createdAt;
-  const currentIntervalMs = freqPerMinToIntervalMs(journey.minPollFreqPerMin);
-  const graceMs = journey.gpsLossGraceMinutes * 60_000;
-  return nowMs - referenceAt > currentIntervalMs + graceMs;
-}
-
-export function startGpsWatchdog(onStale: (journey: Journey) => void): void {
-  if (watchdogHandle) return;
-  watchdogHandle = setInterval(async () => {
-    try {
-      const db = await getDb();
-      const journey = await getActiveJourney(db);
-      if (journey && evaluateStaleFix(journey, Date.now())) {
-        onStale(journey);
-      }
-    } catch (error) {
-      console.warn('GPS watchdog check failed', error);
-      return;
-    }
-  }, CHECK_INTERVAL_MS);
-}
-
-export function stopGpsWatchdog(): void {
-  if (watchdogHandle) {
-    clearInterval(watchdogHandle);
-    watchdogHandle = null;
-  }
+  return referenceAt + currentIntervalMs + journey.gpsLossGraceMinutes * 60_000;
 }

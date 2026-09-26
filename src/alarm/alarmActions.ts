@@ -45,6 +45,16 @@ export async function dismissAlarm(journeyId: number, kind: AlarmKind): Promise<
   const journey = await loadActiveJourneyOrSilence(journeyId);
   if (!journey) return;
 
+  if (kind === 'gpsLoss') {
+    // gps-loss-<id> is also the GPS-loss dead-man deadline (see
+    // location/gpsWatchdog). A fresh fix may already have re-armed it while
+    // this alert was showing, so only clear the displayed alert — cancelling
+    // the id outright would silently stop GPS-loss monitoring until the next
+    // fix.
+    await notifee.cancelDisplayedNotification(alarmNotificationId(kind, journeyId));
+    return;
+  }
+
   // For arrival this id is cancelled again by cancelAllAlertsForJourney below;
   // the double cancel is intentional and harmless (keeps one uniform
   // "silence this alarm first" step for every kind).

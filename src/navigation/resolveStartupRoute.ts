@@ -75,8 +75,9 @@ async function hasRequiredLocationPermissions(): Promise<boolean> {
 
 /**
  * Cold-start routing. Order: migrate the db, re-arm the GPS-loss/low-battery
- * monitors for an active journey (they only live in this JS context, so a
- * process restart loses them; resumeMonitorsIfActive is idempotent), then
+ * monitors for an active journey (the battery listener only lives in this JS
+ * context, so a process restart loses it; the GPS-loss deadline is re-armed
+ * from the latest fix; resumeMonitorsIfActive is idempotent), then
  * decide: a launching alarm notification > Welcome (permissions missing) >
  * resolveInitialRoute(active journey).
  */
