@@ -6,11 +6,13 @@ jest.mock('@notifee/react-native', () => ({
   createChannel: jest.fn().mockResolvedValue('caller-man-alarm'),
   displayNotification: jest.fn().mockResolvedValue('notif-id'),
   createTriggerNotification: jest.fn().mockResolvedValue('notif-id'),
+  getNotificationSettings: jest.fn(),
   AndroidImportance: { HIGH: 4 },
   AndroidVisibility: { PUBLIC: 1 },
   AndroidCategory: { ALARM: 'alarm' },
   TriggerType: { TIMESTAMP: 0 },
-  AlarmType: { SET_ALARM_CLOCK: 4 },
+  AlarmType: { SET: 0, SET_AND_ALLOW_WHILE_IDLE: 1, SET_EXACT: 2, SET_EXACT_AND_ALLOW_WHILE_IDLE: 3, SET_ALARM_CLOCK: 4 },
+  AndroidNotificationSetting: { NOT_SUPPORTED: -1, DISABLED: 0, ENABLED: 1 },
 }));
 
 const journey: Journey = {
@@ -21,7 +23,10 @@ const journey: Journey = {
   createdAt: 0, completedAt: null, arrivedAt: null,
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  (notifee.getNotificationSettings as jest.Mock).mockResolvedValue({ android: { alarm: 1 } });
+});
 
 const SNOOZE_DISMISS_ACTIONS = [
   { title: 'Snooze', pressAction: { id: 'snooze' } },
@@ -92,7 +97,7 @@ test('scheduleSnoozedAlert creates a timestamp trigger notification with the sam
         actions: SNOOZE_DISMISS_ACTIONS,
       }),
     }),
-    expect.objectContaining({ type: 0, timestamp: atMs })
+    { type: 0, timestamp: atMs, alarmManager: { type: 4 } }
   );
 });
 
@@ -105,6 +110,48 @@ test('scheduleSnoozedAlert uses the gps-loss id and messaging when snoozing a gp
       id: 'gps-loss-1',
       title: 'Lost GPS signal',
     }),
-    expect.objectContaining({ type: 0, timestamp: atMs })
+    { type: 0, timestamp: atMs, alarmManager: { type: 4 } }
+  );
+});
+
+test('scheduleSnoozedAlert uses an exact SET_ALARM_CLOCK trigger when the exact-alarm permission is enabled', async () => {
+  (notifee.getNotificationSettings as jest.Mock).mockResolvedValue({ android: { alarm: 1 } });
+  const atMs = Date.now() + 3 * 60_000;
+
+  await scheduleSnoozedAlert(journey, 'arrival', atMs);
+
+  expect(notifee.createTriggerNotification).toHaveBeenCalledWith(
+    expect.objectContaining({ id: 'arrival-1' }),
+    { type: 0, timestamp: atMs, alarmManager: { type: 4 } }
+  );
+});
+
+test.each([
+  ['DISABLED', 0],
+  ['NOT_SUPPORTED', -1],
+])(
+  'scheduleSnoozedAlert falls back to a non-exact trigger when the exact-alarm permission is %s',
+  async (_label, alarmSetting) => {
+    (notifee.getNotificationSettings as jest.Mock).mockResolvedValue({ android: { alarm: alarmSetting } });
+    const atMs = Date.now() + 3 * 60_000;
+
+    await scheduleSnoozedAlert(journey, 'arrival', atMs);
+
+    expect(notifee.createTriggerNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'arrival-1' }),
+      { type: 0, timestamp: atMs, alarmManager: { type: 1 } }
+    );
+  }
+);
+
+test('scheduleSnoozedAlert falls back to a non-exact trigger when getNotificationSettings rejects', async () => {
+  (notifee.getNotificationSettings as jest.Mock).mockRejectedValue(new Error('native module unavailable'));
+  const atMs = Date.now() + 3 * 60_000;
+
+  await scheduleSnoozedAlert(journey, 'arrival', atMs);
+
+  expect(notifee.createTriggerNotification).toHaveBeenCalledWith(
+    expect.objectContaining({ id: 'arrival-1' }),
+    { type: 0, timestamp: atMs, alarmManager: { type: 1 } }
   );
 });

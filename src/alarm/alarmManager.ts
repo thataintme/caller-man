@@ -1,4 +1,11 @@
-import notifee, { AlarmType, AndroidCategory, AndroidImportance, TriggerType } from '@notifee/react-native';
+import notifee, {
+  AlarmType,
+  AndroidCategory,
+  AndroidImportance,
+  AndroidNotificationSetting,
+  TriggerType,
+  TimestampTriggerAlarmManager,
+} from '@notifee/react-native';
 import { Journey } from '../types/journey';
 import { ALARM_CHANNEL_ID, ensureAlarmChannel } from './alarmChannel';
 
@@ -80,19 +87,43 @@ export async function triggerLowBatteryAlert(journey: Journey): Promise<void> {
 }
 
 /**
+ * Resolves the alarmManager config for a scheduled trigger. Prefers
+ * AlarmType.SET_ALARM_CLOCK (exempt from Doze/App Standby deferral, matching
+ * the "bypass DND / display over other apps" alarm-clock behavior spec §9
+ * calls for), but that type is an exact alarm: on API 31+ notifee silently
+ * drops the trigger (logs and returns without throwing) when the app lacks
+ * the SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM permission, which is revoked by
+ * default for new installs on Android 14+. So this checks
+ * notifee.getNotificationSettings().android.alarm first and falls back to
+ * AlarmType.SET_AND_ALLOW_WHILE_IDLE (not exact, never blocked by the
+ * exact-alarm permission) whenever that permission isn't ENABLED — including
+ * when the settings check itself throws, since a snooze must never be lost
+ * because of a failed permission probe.
+ */
+async function resolveAlarmManagerConfig(): Promise<TimestampTriggerAlarmManager> {
+  try {
+    const settings = await notifee.getNotificationSettings();
+    if (settings.android.alarm === AndroidNotificationSetting.ENABLED) {
+      return { type: AlarmType.SET_ALARM_CLOCK };
+    }
+  } catch {
+    // Fall through to the non-exact fallback below — never fail the snooze
+    // because the permission check itself failed.
+  }
+  return { type: AlarmType.SET_AND_ALLOW_WHILE_IDLE };
+}
+
+/**
  * Schedules a snoozed re-alert at `atMs` using notifee's TimestampTrigger,
  * so it fires even if the app is backgrounded or killed in the meantime
  * (unlike a JS setTimeout, which is lost with the process). Reuses the same
  * stable id and presentation as the original alert of this kind, so
  * dismissing/snoozing it again from the Alarm screen works identically.
- *
- * Scheduled with AlarmType.SET_ALARM_CLOCK so Android treats it like a real
- * alarm clock (exempt from Doze/App Standby deferral), matching the "bypass
- * DND / display over other apps" alarm-clock behavior spec §9 calls for.
  */
 export async function scheduleSnoozedAlert(journey: Journey, kind: AlarmKind, atMs: number): Promise<void> {
   await ensureAlarmChannel();
   const { title, body } = alarmContent(kind, journey);
+  const alarmManagerConfig = await resolveAlarmManagerConfig();
   await notifee.createTriggerNotification(
     {
       id: alarmNotificationId(kind, journey.id),
@@ -103,7 +134,7 @@ export async function scheduleSnoozedAlert(journey: Journey, kind: AlarmKind, at
     {
       type: TriggerType.TIMESTAMP,
       timestamp: atMs,
-      alarmManager: { type: AlarmType.SET_ALARM_CLOCK },
+      alarmManager: alarmManagerConfig,
     }
   );
 }
