@@ -1,6 +1,40 @@
-import { MAPBOX_ACCESS_TOKEN, isMapboxTokenConfigured } from './mapbox';
+const ENV_KEY = 'EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN';
+const ORIGINAL_VALUE = process.env[ENV_KEY];
 
-test('the placeholder token is not considered configured', () => {
-  expect(MAPBOX_ACCESS_TOKEN.startsWith('REPLACE_')).toBe(true);
+function loadModule(): typeof import('./mapbox') {
+  let mod!: typeof import('./mapbox');
+  jest.isolateModules(() => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    mod = require('./mapbox');
+  });
+  return mod;
+}
+
+afterEach(() => {
+  if (ORIGINAL_VALUE === undefined) {
+    delete process.env[ENV_KEY];
+  } else {
+    process.env[ENV_KEY] = ORIGINAL_VALUE;
+  }
+});
+
+test('falls back to the placeholder token and is not configured when the env var is unset', () => {
+  delete process.env[ENV_KEY];
+  const { MAPBOX_ACCESS_TOKEN, isMapboxTokenConfigured } = loadModule();
+  expect(MAPBOX_ACCESS_TOKEN).toBe('REPLACE_WITH_YOUR_MAPBOX_PUBLIC_ACCESS_TOKEN');
   expect(isMapboxTokenConfigured()).toBe(false);
+});
+
+test('is not configured when the env var is an empty string', () => {
+  process.env[ENV_KEY] = '';
+  const { MAPBOX_ACCESS_TOKEN, isMapboxTokenConfigured } = loadModule();
+  expect(MAPBOX_ACCESS_TOKEN).toBe('');
+  expect(isMapboxTokenConfigured()).toBe(false);
+});
+
+test('uses the env var value and is configured when it is set to a real token', () => {
+  process.env[ENV_KEY] = 'pk.unit-test-fake-token';
+  const { MAPBOX_ACCESS_TOKEN, isMapboxTokenConfigured } = loadModule();
+  expect(MAPBOX_ACCESS_TOKEN).toBe('pk.unit-test-fake-token');
+  expect(isMapboxTokenConfigured()).toBe(true);
 });
