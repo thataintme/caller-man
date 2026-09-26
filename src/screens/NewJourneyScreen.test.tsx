@@ -9,6 +9,7 @@ import { haversineDistanceM } from '../geo/haversine';
 import { searchDestination } from '../location/geocode';
 import { cacheAreaForJourney } from '../location/offlineMapCache';
 import { isMapboxTokenConfigured } from '../constants/mapbox';
+import { SliderWithCustomInput } from '../components/SliderWithCustomInput';
 
 jest.setTimeout(45000);
 
@@ -48,14 +49,28 @@ const defaults = {
   batteryCutoffPct: 15, snoozeMinutes: 3, gpsLossGraceMinutes: 2,
 };
 
-// Mirrors the screen's destination placeholder (PLACEHOLDER_DEST_LAT/LNG),
-// kept distinct so the radius cap isn't degenerately zero: ~30km away from
-// the default mocked current-location fix below, which caps the radius at
-// ~12km — comfortably above the 10km default radius, so it's unclamped in
-// most tests.
+// The destination most tests type in (M2: there is no preselected
+// destination any more): ~30km away from the default mocked current-location
+// fix below, which caps the radius at ~12km — comfortably above the 10km
+// default radius, so it's unclamped in most tests.
 const PLACEHOLDER_DEST_LAT = 51.7774;
 const PLACEHOLDER_DEST_LNG = -0.1278;
 const MOCK_USER_COORDS = { latitude: 51.5074, longitude: -0.1278 };
+
+// Chooses a destination by typing coordinates (one of the three ways to pick
+// one, with search and tapping the map) — Start stays disabled until then.
+function chooseDestination(
+  getByTestId: (id: string) => any,
+  lat: number = PLACEHOLDER_DEST_LAT,
+  lng: number = PLACEHOLDER_DEST_LNG
+) {
+  const latInput = getByTestId('destLatInput');
+  fireEvent.changeText(latInput, String(lat));
+  fireEvent(latInput, 'endEditing');
+  const lngInput = getByTestId('destLngInput');
+  fireEvent.changeText(lngInput, String(lng));
+  fireEvent(lngInput, 'endEditing');
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -71,8 +86,9 @@ beforeEach(() => {
 test('shows an alert and does not navigate when a journey is already active', async () => {
   (createJourney as jest.Mock).mockRejectedValue(new ActiveJourneyExistsError());
   const navigation = { replace: jest.fn() } as any;
-  const { getByText, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  const { getByText, findByText, getByTestId } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
   fireEvent.press(getByText('Start Journey'));
 
   await waitFor(() => expect(createJourney).toHaveBeenCalled(), { timeout: 20000 });
@@ -83,8 +99,9 @@ test('shows an alert and does not navigate when a journey is already active', as
 test('starting a journey creates it, starts tracking, and navigates to CurrentJourney', async () => {
   (createJourney as jest.Mock).mockResolvedValue({ id: 42, status: 'active' });
   const navigation = { replace: jest.fn() } as any;
-  const { getByText, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  const { getByText, findByText, getByTestId } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
   fireEvent.press(getByText('Start Journey'));
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 42 }), { timeout: 20000 });
@@ -94,8 +111,9 @@ test('starting a journey creates it, starts tracking, and navigates to CurrentJo
 test('caches the journey area for offline use after tracking starts, with the real user position', async () => {
   (createJourney as jest.Mock).mockResolvedValue({ id: 42, status: 'active' });
   const navigation = { replace: jest.fn() } as any;
-  const { getByText, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  const { getByText, findByText, getByTestId } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
   fireEvent.press(getByText('Start Journey'));
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalled(), { timeout: 20000 });
@@ -114,8 +132,9 @@ test('navigates to CurrentJourney even when caching the area fails', async () =>
   (createJourney as jest.Mock).mockResolvedValue({ id: 42, status: 'active' });
   (cacheAreaForJourney as jest.Mock).mockRejectedValue(new Error('offline'));
   const navigation = { replace: jest.fn() } as any;
-  const { getByText, findByText, queryByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  const { getByText, findByText, queryByText, getByTestId } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
   fireEvent.press(getByText('Start Journey'));
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('CurrentJourney', { journeyId: 42 }), {
@@ -127,8 +146,9 @@ test('navigates to CurrentJourney even when caching the area fails', async () =>
 test('creates the journey with a meters-based radius, the real computed distance, and defaults-derived fields', async () => {
   (createJourney as jest.Mock).mockResolvedValue({ id: 5, status: 'active' });
   const navigation = { replace: jest.fn() } as any;
-  const { getByText, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  const { getByText, findByText, getByTestId } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
   fireEvent.press(getByText('Start Journey'));
 
   await waitFor(() => expect(createJourney).toHaveBeenCalled(), { timeout: 20000 });
@@ -158,6 +178,7 @@ test('a custom battery cutoff value above the cap is clamped to the cap', async 
   const navigation = { replace: jest.fn() } as any;
   const { getByText, getByTestId, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
 
   fireEvent(getByTestId('batteryCutoffSlider-switch'), 'valueChange', true);
   const input = getByTestId('batteryCutoffSlider-input');
@@ -195,8 +216,9 @@ test('cancels the journey and shows an error when starting tracking fails after 
   (createJourney as jest.Mock).mockResolvedValue({ id: 99, status: 'active' });
   (startTracking as jest.Mock).mockRejectedValue(new Error('location permission revoked'));
   const navigation = { replace: jest.fn() } as any;
-  const { getByText, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  const { getByText, findByText, getByTestId } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
   fireEvent.press(getByText('Start Journey'));
 
   await waitFor(() => expect(finishJourney).toHaveBeenCalledWith(expect.anything(), 99, 'cancelled'), { timeout: 20000 });
@@ -217,6 +239,8 @@ test('disables Start and shows a message when the destination is at the current 
   });
   const navigation = { replace: jest.fn() } as any;
   const { getByText, getByTestId, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+  await findByText('Start Journey', {}, { timeout: 20000 });
+  chooseDestination(getByTestId);
 
   await findByText('Destination is too close', {}, { timeout: 20000 });
   await waitFor(
@@ -258,8 +282,9 @@ test('reverts the latitude field to the current destination when a commit is out
   const { getByTestId, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
 
+  chooseDestination(getByTestId);
   const latInput = getByTestId('destLatInput');
-  expect(latInput.props.value).toBe(String(PLACEHOLDER_DEST_LAT));
+  await waitFor(() => expect(getByTestId('destLatInput').props.value).toBe(String(PLACEHOLDER_DEST_LAT)));
 
   fireEvent.changeText(latInput, '200');
   fireEvent(latInput, 'endEditing');
@@ -372,4 +397,140 @@ test('disables Go and shows a hint when the Mapbox token is not configured', asy
 
   await findByText('Destination search needs a Mapbox token.', {}, { timeout: 20000 });
   expect(getByTestId('searchGoButton').props.accessibilityState?.disabled).toBe(true);
+});
+
+describe('M2: no preselected destination', () => {
+  test('Start is disabled with a hint until a destination is chosen, and pressing it does nothing', async () => {
+    const navigation = { replace: jest.fn() } as any;
+    const { getByText, getByTestId, findByText } = render(<NewJourneyScreen navigation={navigation} route={{} as any} />);
+    await findByText('Start Journey', {}, { timeout: 20000 });
+
+    expect(getByText('Choose a destination: search, tap the map, or enter coordinates.')).toBeTruthy();
+    expect(getByTestId('startJourneyButton').props.accessibilityState?.disabled).toBe(true);
+    expect(getByTestId('destLatInput').props.value).toBe('');
+    expect(getByTestId('destLngInput').props.value).toBe('');
+    fireEvent.press(getByText('Start Journey'));
+    expect(createJourney).not.toHaveBeenCalled();
+  });
+
+  test('the map starts centred on the user with no destination pin', async () => {
+    const { findByText, UNSAFE_getByType, UNSAFE_queryByType } = render(
+      <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+    );
+    await findByText('Start Journey', {}, { timeout: 20000 });
+    expect(UNSAFE_getByType('MapboxCamera' as any).props.centerCoordinate).toEqual([
+      MOCK_USER_COORDS.longitude,
+      MOCK_USER_COORDS.latitude,
+    ]);
+    expect(UNSAFE_queryByType('MapboxPointAnnotation' as any)).toBeNull();
+  });
+
+  test('typing both coordinates chooses the destination: Start enables, the hint goes, the pin and camera move there', async () => {
+    const { getByTestId, findByText, queryByText, UNSAFE_getByType } = render(
+      <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+    );
+    await findByText('Start Journey', {}, { timeout: 20000 });
+    chooseDestination(getByTestId);
+
+    await waitFor(() => expect(getByTestId('startJourneyButton').props.accessibilityState?.disabled).toBe(false));
+    expect(queryByText('Choose a destination: search, tap the map, or enter coordinates.')).toBeNull();
+    expect(UNSAFE_getByType('MapboxPointAnnotation' as any).props.coordinate).toEqual([
+      PLACEHOLDER_DEST_LNG,
+      PLACEHOLDER_DEST_LAT,
+    ]);
+    expect(UNSAFE_getByType('MapboxCamera' as any).props.centerCoordinate).toEqual([
+      PLACEHOLDER_DEST_LNG,
+      PLACEHOLDER_DEST_LAT,
+    ]);
+  });
+
+  test('tapping the map chooses the destination', async () => {
+    const { getByTestId, findByText, UNSAFE_getByType } = render(
+      <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+    );
+    await findByText('Start Journey', {}, { timeout: 20000 });
+    fireEvent(UNSAFE_getByType('MapboxMapView' as any), 'press', {
+      geometry: { coordinates: [PLACEHOLDER_DEST_LNG, PLACEHOLDER_DEST_LAT] },
+    });
+    await waitFor(() => expect(getByTestId('startJourneyButton').props.accessibilityState?.disabled).toBe(false));
+  });
+});
+
+describe('I6: radius slider on a short trip (40% cap below the 5 km slider minimum)', () => {
+  // ~5 km north of the mocked user -> cap ~2 km.
+  const SHORT_TRIP_LAT = 51.5524;
+
+  test('the slider range stays valid (min <= max), tops out at the cap, and the value stays within it', async () => {
+    (createJourney as jest.Mock).mockResolvedValue({ id: 3, status: 'active' });
+    const { getByText, getByTestId, findByText, UNSAFE_getAllByType } = render(
+      <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+    );
+    await findByText('Start Journey', {}, { timeout: 20000 });
+    chooseDestination(getByTestId, SHORT_TRIP_LAT, MOCK_USER_COORDS.longitude);
+
+    const capKm =
+      (0.4 *
+        haversineDistanceM(
+          { lat: MOCK_USER_COORDS.latitude, lng: MOCK_USER_COORDS.longitude },
+          { lat: SHORT_TRIP_LAT, lng: MOCK_USER_COORDS.longitude }
+        )) /
+      1000;
+    expect(capKm).toBeLessThan(5);
+
+    const radiusSlider = () => UNSAFE_getAllByType(SliderWithCustomInput).find((el) => el.props.testID === 'radiusSlider')!;
+    await waitFor(() => expect(radiusSlider().props.max).toBeCloseTo(capKm, 6));
+    const { min, max, value, step } = radiusSlider().props;
+    expect(min).toBe(0.1);
+    expect(min).toBeLessThanOrEqual(max);
+    expect(value).toBeLessThanOrEqual(max);
+    expect(value).toBeGreaterThan(0);
+    expect(step).toBe(0.1);
+
+    fireEvent.press(getByText('Start Journey'));
+    await waitFor(() => expect(createJourney).toHaveBeenCalled(), { timeout: 20000 });
+    const { radiusM } = (createJourney as jest.Mock).mock.calls[0][1];
+    expect(radiusM).toBeLessThanOrEqual(capKm * 1000);
+  });
+
+  test('a normal trip keeps the 5 km slider minimum and 1 km steps', async () => {
+    const { getByTestId, findByText, UNSAFE_getAllByType } = render(
+      <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+    );
+    await findByText('Start Journey', {}, { timeout: 20000 });
+    chooseDestination(getByTestId);
+    const radiusSlider = () => UNSAFE_getAllByType(SliderWithCustomInput).find((el) => el.props.testID === 'radiusSlider')!;
+    await waitFor(() => expect(getByTestId('startJourneyButton').props.accessibilityState?.disabled).toBe(false));
+    expect(radiusSlider().props.min).toBe(5);
+    expect(radiusSlider().props.step).toBe(1);
+  });
+});
+
+describe('M1: journey name follows the chosen search result', () => {
+  test("defaults to the selected result's place name, until the user edits the name", async () => {
+    (searchDestination as jest.Mock).mockResolvedValue([
+      { lat: 51.47, lng: -0.4543, placeName: 'Heathrow Terminal 5' },
+      { lat: 51.5007, lng: -0.1246, placeName: 'London Bridge' },
+    ]);
+    const { getByText, getByPlaceholderText, findByText } = render(
+      <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+    );
+    await findByText('Start Journey', {}, { timeout: 20000 });
+
+    fireEvent.changeText(getByPlaceholderText('e.g. Heathrow Terminal 5'), 'London');
+    fireEvent.press(getByText('Go'));
+    await waitFor(() => expect(getByPlaceholderText('Journey Name').props.value).toBe('Heathrow Terminal 5'));
+
+    fireEvent.press(await findByText('London Bridge'));
+    await waitFor(() => expect(getByPlaceholderText('Journey Name').props.value).toBe('London Bridge'));
+
+    fireEvent.changeText(getByPlaceholderText('Journey Name'), 'Work');
+    fireEvent.press(getByText('Heathrow Terminal 5'));
+    await waitFor(() => expect(getByPlaceholderText('Journey Name').props.value).toBe('Work'));
+  });
+});
+
+test('M8: the Alarm Tune field says custom tunes are coming soon and the default sound is used', async () => {
+  const { findByText } = render(<NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />);
+  await findByText('Start Journey', {}, { timeout: 20000 });
+  expect(await findByText('Custom tunes coming soon — the default alarm sound is used.')).toBeTruthy();
 });

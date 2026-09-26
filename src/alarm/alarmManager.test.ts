@@ -63,6 +63,28 @@ test('triggerAlarm displays a full-screen, DND-bypassing ALARM-category notifica
   );
 });
 
+test('M1: the arrival notification body names the destination and gives the radius in km', async () => {
+  await triggerAlarm({ ...journey, radiusM: 10_000 });
+  expect(notifee.displayNotification).toHaveBeenCalledWith(
+    expect.objectContaining({ body: "You're within 10 km of Station" })
+  );
+  await triggerAlarm({ ...journey, radiusM: 7_250 });
+  expect(notifee.displayNotification).toHaveBeenLastCalledWith(
+    expect.objectContaining({ body: "You're within 7.3 km of Station" })
+  );
+});
+
+test.each([
+  ['arrival', triggerAlarm],
+  ['gps-loss', triggerGpsLossAlert],
+  ['low-battery', triggerLowBatteryAlert],
+] as const)('M4: the %s alert is ongoing, so it cannot be swiped away silently', async (_label, trigger) => {
+  await trigger(journey);
+  expect(notifee.displayNotification).toHaveBeenCalledWith(
+    expect.objectContaining({ android: expect.objectContaining({ ongoing: true }) })
+  );
+});
+
 test('triggerGpsLossAlert displays a full-screen, looping alert with GPS-loss messaging', async () => {
   await triggerGpsLossAlert(journey);
   expect(notifee.displayNotification).toHaveBeenCalledWith(

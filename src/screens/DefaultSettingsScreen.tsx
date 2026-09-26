@@ -9,6 +9,13 @@ import {
   RADIUS_MIN_M, RADIUS_MAX_M, POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN,
   SNOOZE_MINUTES_MIN, SNOOZE_MINUTES_MAX, GPS_LOSS_GRACE_MINUTES_MIN, GPS_LOSS_GRACE_MINUTES_MAX,
 } from '../constants/limits';
+import { ALARM_TUNE_HINT } from '../constants/copy';
+
+// The custom-value input accepts any positive number; a battery percentage
+// only makes sense within 0..100.
+function clampPct(value: number): number {
+  return Math.min(Math.max(value, 0), 100);
+}
 
 export function DefaultSettingsScreen() {
   const [settings, setSettings] = useState<DefaultSettings | null>(null);
@@ -76,7 +83,8 @@ export function DefaultSettingsScreen() {
       <SliderWithCustomInput label="Min GPS Poll Frequency" unit="/m" value={settings.minPollFreqPerMin}
         min={POLL_FREQ_MIN_PER_MIN} max={POLL_FREQ_MAX_PER_MIN} onChange={(v) => updateFreq('min', v)} />
       <SliderWithCustomInput label="Low Battery Cutoff" unit="%" value={settings.batteryCutoffPct}
-        min={5} max={50} onChange={(v) => { setSettings({ ...settings, batteryCutoffPct: v }); setSaved(false); }} />
+        min={5} max={50} testID="batteryCutoffSlider"
+        onChange={(v) => { setSettings({ ...settings, batteryCutoffPct: clampPct(v) }); setSaved(false); }} />
       <SliderWithCustomInput label="Snooze Duration" unit="min" value={settings.snoozeMinutes}
         min={SNOOZE_MINUTES_MIN} max={SNOOZE_MINUTES_MAX}
         onChange={(v) => { setSettings({ ...settings, snoozeMinutes: v }); setSaved(false); }} />
@@ -87,6 +95,7 @@ export function DefaultSettingsScreen() {
         <Text style={styles.label}>Alarm Tune</Text>
         <TextInput style={styles.input} value={settings.alarmTune}
           onChangeText={(v) => { setSettings({ ...settings, alarmTune: v }); setSaved(false); }} />
+        <Text style={styles.hint}>{ALARM_TUNE_HINT}</Text>
       </View>
       <Pressable style={styles.button} onPress={handleSave}>
         <Text style={styles.buttonText}>{saved ? 'Defaults Saved' : 'Save'}</Text>
@@ -108,6 +117,7 @@ const styles = StyleSheet.create({
   field: { marginVertical: 12 },
   label: { color: '#e5e7eb', marginBottom: 6 },
   input: { borderWidth: 1, borderColor: '#374151', borderRadius: 6, padding: 8, color: '#fff' },
+  hint: { color: '#9ca3af', marginTop: 6 },
   button: { backgroundColor: '#10b981', padding: 14, borderRadius: 10, marginTop: 12 },
   buttonText: { color: '#04140d', textAlign: 'center', fontWeight: '700' },
 });

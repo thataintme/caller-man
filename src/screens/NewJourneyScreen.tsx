@@ -19,15 +19,17 @@ import { searchDestination, GeocodeResult } from '../location/geocode';
 import { cacheAreaForJourney } from '../location/offlineMapCache';
 import { RADIUS_MIN_M, RADIUS_MAX_M, POLL_FREQ_MIN_PER_MIN, POLL_FREQ_MAX_PER_MIN } from '../constants/limits';
 import { MAPBOX_ACCESS_TOKEN, MAP_STYLE_URL, isMapboxTokenConfigured } from '../constants/mapbox';
+import { ALARM_TUNE_HINT } from '../constants/copy';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'NewJourney'>;
 
-// Destination placeholder until search (Tasks 28-29) lets the user pick one
-// directly; kept distinct from any real "current location" so the initial
-// radius cap isn't degenerately zero. The user's actual position is fetched
-// live below (getCurrentPositionAsync) — no placeholder for that.
-const PLACEHOLDER_DEST_LAT = 51.7774;
-const PLACEHOLDER_DEST_LNG = -0.1278;
+type LatLng = { lat: number; lng: number };
+
+// Below a 5 km radius cap (trips under 12.5 km) the 5-200 km slider range
+// would invert, so the slider runs from this small positive floor up to the
+// cap instead, in finer steps.
+const SHORT_TRIP_RADIUS_MIN_KM = 0.1;
+const SHORT_TRIP_RADIUS_STEP_KM = 0.1;
 
 // §5.3/§8.5: below the configured default cutoff, the max selectable cutoff
 // for this journey is capped at (current battery - 5%); otherwise there's no
@@ -40,8 +42,19 @@ function batteryCutoffCap(currentBatteryPct: number, defaultCutoffPct: number): 
 }
 
 function parseCoordinate(text: string): number | null {
+  if (text.trim() === '') return null;
   const n = Number(text.replace(',', '.'));
   return Number.isFinite(n) ? n : null;
+}
+
+function parseLat(text: string): number | null {
+  const n = parseCoordinate(text);
+  return n !== null && n >= -90 && n <= 90 ? n : null;
+}
+
+function parseLng(text: string): number | null {
+  const n = parseCoordinate(text);
+  return n !== null && n >= -180 && n <= 180 ? n : null;
 }
 
 const LOCATION_TIMEOUT_MS = 20_000;
@@ -66,14 +79,18 @@ export function NewJourneyScreen({ navigation }: Props) {
   const [createError, setCreateError] = useState<string | null>(null);
 
   const [name, setName] = useState('New Journey');
-  const [destLat, setDestLat] = useState(PLACEHOLDER_DEST_LAT);
-  const [destLng, setDestLng] = useState(PLACEHOLDER_DEST_LNG);
-  // Local text state for the coordinate fields: committed to destLat/destLng
+  // Once the user types their own name, a chosen search result no longer
+  // overwrites it.
+  const [nameEdited, setNameEdited] = useState(false);
+  // No destination until the user chooses one (search, map tap, or typed
+  // coordinates) — Start stays disabled until then.
+  const [destination, setDestination] = useState<LatLng | null>(null);
+  // Local text state for the coordinate fields: committed to the destination
   // (and therefore to the radius-cap recalculation) only on blur/submit, so
   // in-progress typing of negatives and decimals isn't clobbered or
   // prematurely rejected keystroke-by-keystroke.
-  const [destLatText, setDestLatText] = useState(String(PLACEHOLDER_DEST_LAT));
-  const [destLngText, setDestLngText] = useState(String(PLACEHOLDER_DEST_LNG));
+  const [destLatText, setDestLatText] = useState('');
+  const [destLngText, setDestLngText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -89,11 +106,11 @@ export function NewJourneyScreen({ navigation }: Props) {
   const [currentBatteryPct, setCurrentBatteryPct] = useState(-1);
 
   useEffect(() => {
-    setDestLatText(String(destLat));
-  }, [destLat]);
-  useEffect(() => {
-    setDestLngText(String(destLng));
-  }, [destLng]);
+    if (destination) {
+      setDestLatText(String(destination.lat));
+      setDestLngText(String(destination.lng));
+    }
+  }, [destination]);
 
   async function loadSetupData() {
     setLoadError(null);
@@ -113,8 +130,8 @@ export function NewJourneyScreen({ navigation }: Props) {
       setMinFreq(d.minPollFreqPerMin);
       setAlarmTune(d.alarmTune);
 
-      const initialDistanceM = haversineDistanceM({ lat: uLat, lng: uLng }, { lat: destLat, lng: destLng });
-      setRadiusM(clampRadiusToCap(d.radiusM, initialDistanceM));
+      // Clamped to the 40% cap once a destination is chosen.
+      setRadiusM(d.radiusM);
 
       // A battery read failure falls back to the configured default instead
       // of failing the whole load.
@@ -171,14 +188,21 @@ export function NewJourneyScreen({ navigation }: Props) {
   const knownUserLat = userLat;
   const knownUserLng = userLng;
 
-  const distanceM = haversineDistanceM({ lat: knownUserLat, lng: knownUserLng }, { lat: destLat, lng: destLng });
-  const radiusCapM = maxAllowedRadiusM(distanceM);
-  const destinationTooClose = radiusCapM <= 0;
+  const distanceM =
+    destination !== null ? haversineDistanceM({ lat: knownUserLat, lng: knownUserLng }, destination) : null;
+  // Until a destination is chosen there's no cap beyond the slider maximum.
+  const radiusCapM = distanceM !== null ? maxAllowedRadiusM(distanceM) : RADIUS_MAX_M;
+  const destinationTooClose = distanceM !== null && radiusCapM <= 0;
   const currentBatteryCutoffCap = batteryCutoffCap(currentBatteryPct, defaults.batteryCutoffPct);
 
+  const radiusCapKm = radiusCapM / 1000;
+  const radiusSliderMaxKm = Math.min(RADIUS_MAX_M / 1000, radiusCapKm);
+  const shortTrip = radiusCapM < RADIUS_MIN_M;
+  const radiusSliderMinKm = shortTrip ? Math.min(SHORT_TRIP_RADIUS_MIN_KM, radiusSliderMaxKm) : RADIUS_MIN_M / 1000;
+  const radiusSliderStepKm = shortTrip ? SHORT_TRIP_RADIUS_STEP_KM : 1;
+
   function handleDestinationChange(lat: number, lng: number) {
-    setDestLat(lat);
-    setDestLng(lng);
+    setDestination({ lat, lng });
     const newDistance = haversineDistanceM({ lat: knownUserLat, lng: knownUserLng }, { lat, lng });
     setRadiusM((current) => clampRadiusToCap(current, newDistance));
   }
@@ -186,6 +210,12 @@ export function NewJourneyScreen({ navigation }: Props) {
   function selectSearchResult(result: GeocodeResult) {
     handleDestinationChange(result.lat, result.lng);
     setSelectedPlaceName(result.placeName);
+    if (!nameEdited) setName(result.placeName);
+  }
+
+  function handleNameChange(text: string) {
+    setName(text);
+    setNameEdited(true);
   }
 
   async function handleSearch() {
@@ -209,28 +239,35 @@ export function NewJourneyScreen({ navigation }: Props) {
     }
   }
 
+  // A typed coordinate becomes the destination once both fields hold a
+  // valid value (before a destination exists, the first field just waits
+  // for the second).
   function commitDestLat() {
-    const parsed = parseCoordinate(destLatText);
-    if (parsed !== null && parsed >= -90 && parsed <= 90) {
-      handleDestinationChange(parsed, destLng);
-    } else {
+    const lat = parseLat(destLatText);
+    if (lat === null) {
       // Rejected (out of range or unparseable): revert to the current,
       // still-valid destination rather than leaving the bad text on screen.
-      setDestLatText(String(destLat));
+      setDestLatText(destination ? String(destination.lat) : '');
+      return;
     }
+    const lng = destination ? destination.lng : parseLng(destLngText);
+    if (lng !== null) handleDestinationChange(lat, lng);
   }
 
   function commitDestLng() {
-    const parsed = parseCoordinate(destLngText);
-    if (parsed !== null && parsed >= -180 && parsed <= 180) {
-      handleDestinationChange(destLat, parsed);
-    } else {
-      setDestLngText(String(destLng));
+    const lng = parseLng(destLngText);
+    if (lng === null) {
+      setDestLngText(destination ? String(destination.lng) : '');
+      return;
     }
+    const lat = destination ? destination.lat : parseLat(destLatText);
+    if (lat !== null) handleDestinationChange(lat, lng);
   }
 
   function handleRadiusChange(km: number) {
-    setRadiusM(clampRadiusToCap(km * 1000, distanceM));
+    // radiusCapM is the 40% cap once a destination is chosen (the slider
+    // maximum before that).
+    setRadiusM(Math.min(km * 1000, radiusCapM));
   }
 
   function handleFreqChange(changed: 'min' | 'max', value: number) {
@@ -249,6 +286,7 @@ export function NewJourneyScreen({ navigation }: Props) {
 
   async function handleStart() {
     if (!defaults || creating || activeJourneyBlocked || destinationTooClose) return;
+    if (destination === null || distanceM === null) return;
     setCreateError(null);
     setCreating(true);
 
@@ -257,8 +295,8 @@ export function NewJourneyScreen({ navigation }: Props) {
       const db = await getDb();
       journey = await createJourney(db, {
         name,
-        destinationLat: destLat,
-        destinationLng: destLng,
+        destinationLat: destination.lat,
+        destinationLng: destination.lng,
         radiusM,
         maxPollFreqPerMin: maxFreq,
         minPollFreqPerMin: minFreq,
@@ -323,7 +361,7 @@ export function NewJourneyScreen({ navigation }: Props) {
       {destinationTooClose && <Text style={styles.errorText}>Destination is too close</Text>}
       {createError !== null && <Text style={styles.errorText}>{createError}</Text>}
 
-      <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Journey Name" placeholderTextColor="#6b7280" />
+      <TextInput style={styles.input} value={name} onChangeText={handleNameChange} placeholder="Journey Name" placeholderTextColor="#6b7280" />
 
       <View style={styles.searchRow}>
         <TextInput
@@ -371,10 +409,15 @@ export function NewJourneyScreen({ navigation }: Props) {
           handleDestinationChange(lat, lng);
         }}
       >
-        <Mapbox.Camera centerCoordinate={[destLng, destLat]} zoomLevel={10} />
-        <Mapbox.PointAnnotation id="destination" coordinate={[destLng, destLat]}>
-          <View style={styles.pin} />
-        </Mapbox.PointAnnotation>
+        <Mapbox.Camera
+          centerCoordinate={destination ? [destination.lng, destination.lat] : [knownUserLng, knownUserLat]}
+          zoomLevel={10}
+        />
+        {destination && (
+          <Mapbox.PointAnnotation id="destination" coordinate={[destination.lng, destination.lat]}>
+            <View style={styles.pin} />
+          </Mapbox.PointAnnotation>
+        )}
       </Mapbox.MapView>
 
       <View style={styles.coordRow}>
@@ -385,6 +428,8 @@ export function NewJourneyScreen({ navigation }: Props) {
           onChangeText={setDestLatText}
           onEndEditing={commitDestLat}
           onSubmitEditing={commitDestLat}
+          placeholder="Latitude"
+          placeholderTextColor="#6b7280"
           testID="destLatInput"
         />
         <TextInput
@@ -394,12 +439,14 @@ export function NewJourneyScreen({ navigation }: Props) {
           onChangeText={setDestLngText}
           onEndEditing={commitDestLng}
           onSubmitEditing={commitDestLng}
+          placeholder="Longitude"
+          placeholderTextColor="#6b7280"
           testID="destLngInput"
         />
       </View>
 
       <SliderWithCustomInput testID="radiusSlider" label="Alarm Radius" unit="km" value={radiusM / 1000}
-        min={RADIUS_MIN_M / 1000} max={Math.min(RADIUS_MAX_M / 1000, radiusCapM / 1000)}
+        min={radiusSliderMinKm} max={radiusSliderMaxKm} step={radiusSliderStepKm}
         onChange={handleRadiusChange} />
       <SliderWithCustomInput testID="maxFreqSlider" label="Max GPS Poll Frequency" unit="/m" value={maxFreq}
         min={POLL_FREQ_MIN_PER_MIN} max={POLL_FREQ_MAX_PER_MIN} onChange={(v) => handleFreqChange('max', v)} />
@@ -412,12 +459,16 @@ export function NewJourneyScreen({ navigation }: Props) {
         <Text style={styles.label}>Alarm Tune</Text>
         <TextInput style={styles.input} value={alarmTune} onChangeText={setAlarmTune}
           placeholder="Alarm Tune" placeholderTextColor="#6b7280" />
+        <Text style={styles.hint}>{ALARM_TUNE_HINT}</Text>
       </View>
 
+      {destination === null && (
+        <Text style={styles.hint}>Choose a destination: search, tap the map, or enter coordinates.</Text>
+      )}
       <Pressable
         style={styles.button}
         onPress={handleStart}
-        disabled={creating || activeJourneyBlocked || destinationTooClose}
+        disabled={creating || activeJourneyBlocked || destinationTooClose || destination === null}
         testID="startJourneyButton"
       >
         <Text style={styles.buttonText}>{creating ? 'Starting…' : 'Start Journey'}</Text>
@@ -446,6 +497,7 @@ const styles = StyleSheet.create({
   goButtonText: { color: '#04140d', fontWeight: '700' },
   searchHint: { color: '#9ca3af', marginBottom: 12 },
   selectedPlace: { color: '#9ca3af', marginBottom: 8 },
+  hint: { color: '#9ca3af', marginTop: -4, marginBottom: 8 },
   resultsList: { marginBottom: 12 },
   resultItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#374151' },
   resultText: { color: '#e5e7eb' },

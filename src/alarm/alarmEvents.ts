@@ -9,7 +9,7 @@ import { alarmNavigator } from '../navigation/navigationRef';
  * - Background (registered at module scope in index.ts, so it also runs in
  *   headless JS when the app is killed): Snooze/Dismiss action presses run
  *   the action, without navigating. A tap on the alarm (PRESS / 'default')
- *   opens the Alarm screen only on a warm start, i.e. when the app's
+ *   or its delivery (DELIVERED) opens the Alarm screen only on a warm start, i.e. when the app's
  *   navigator is alive (isReady); in headless JS it isn't, so it's a no-op
  *   and cold start is handled by resolveStartupRoute.
  * - Foreground (registered by App while mounted): the same actions, plus
@@ -98,7 +98,10 @@ export function createBackgroundAlarmEventHandler(
 ): (event: Event) => Promise<void> {
   return async (event) => {
     try {
-      if (isOpenAlarmEvent(event)) {
+      // DELIVERED too: an alarm delivered while the app is warm but
+      // backgrounded arrives here, and should bring up the Alarm screen
+      // just like a tap would (a no-op in headless JS — see above).
+      if (isOpenAlarmEvent(event) || event.type === EventType.DELIVERED) {
         openAlarmIfReady(event, navigator);
         return;
       }

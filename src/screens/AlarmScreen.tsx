@@ -11,11 +11,16 @@ import { leaveAlarm, resetToJourneys } from '../navigation/alarmNavigation';
 type Props = NativeStackScreenProps<RootStackParamList, 'Alarm'>;
 type Kind = Props['route']['params']['kind'];
 
-const TITLES: Record<Kind, string> = {
-  arrival: "You've arrived",
-  gpsLoss: 'Lost GPS signal',
-  lowBattery: 'Battery running low',
-};
+function alarmTitle(kind: Kind, journey: Journey): string {
+  switch (kind) {
+    case 'arrival':
+      return `You've arrived near ${journey.name}`; // spec §5.7
+    case 'gpsLoss':
+      return 'Lost GPS signal';
+    case 'lowBattery':
+      return 'Battery running low';
+  }
+}
 
 export function AlarmScreen({ route, navigation }: Props) {
   const { journeyId, kind } = route.params;
@@ -116,7 +121,7 @@ export function AlarmScreen({ route, navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>{TITLES[kind]}</Text>
+      <Text style={styles.title}>{alarmTitle(kind, journey)}</Text>
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
       <Pressable
         style={[styles.snoozeButton, inFlight && styles.buttonDisabled]}

@@ -101,6 +101,9 @@ describe('background handler', () => {
   test.each([
     ['PRESS', event(PRESS, 'gps-loss-4', 'default')],
     ['ACTION_PRESS default', event(ACTION_PRESS, 'gps-loss-4', 'default')],
+    // M3: an alarm delivered while the app is warm but backgrounded arrives
+    // on the background handler; open the Alarm screen like a PRESS would.
+    ['DELIVERED', event(DELIVERED, 'gps-loss-4')],
   ])('warm start: %s opens the Alarm when the navigator is ready, without running an action', async (_l, e) => {
     const actions = makeActions();
     const nav = makeNavigator({ name: 'CurrentJourney', params: { journeyId: 4 } });
@@ -108,6 +111,18 @@ describe('background handler', () => {
     expect(nav.showAlarm).toHaveBeenCalledWith({ journeyId: 4, kind: 'gpsLoss' });
     expect(actions.snoozeAlarm).not.toHaveBeenCalled();
     expect(actions.dismissAlarm).not.toHaveBeenCalled();
+  });
+
+  test('headless: DELIVERED with no ready navigator does not navigate', async () => {
+    const nav = makeNavigator(undefined, false);
+    await createBackgroundAlarmEventHandler(makeActions(), nav)(event(DELIVERED, 'gps-loss-4'));
+    expect(nav.showAlarm).not.toHaveBeenCalled();
+  });
+
+  test('warm start: DELIVERED of a non-alarm notification is ignored', async () => {
+    const nav = makeNavigator({ name: 'CurrentJourney', params: { journeyId: 4 } });
+    await createBackgroundAlarmEventHandler(makeActions(), nav)(event(DELIVERED, 'expo-location-service'));
+    expect(nav.showAlarm).not.toHaveBeenCalled();
   });
 
   test('headless: PRESS with no ready navigator does not navigate', async () => {

@@ -24,6 +24,9 @@ function alarmAndroidOptions() {
     importance: AndroidImportance.HIGH,
     fullScreenAction: { id: 'default' },
     loopSound: true,
+    // Can't be swiped away: the alarm is only silenced via Snooze/Dismiss
+    // (or the Alarm screen), never silently from the shade.
+    ongoing: true,
     pressAction: { id: 'default' },
     actions: [
       { title: 'Snooze', pressAction: { id: 'snooze' } },
@@ -85,10 +88,15 @@ export async function cancelAllAlertsForJourney(journeyId: number): Promise<void
   await notifee.cancelAllNotifications(ALL_ALARM_KINDS.map((kind) => alarmNotificationId(kind, journeyId)));
 }
 
+// Metric (spec §10), at most one decimal: 10000 -> "10", 7250 -> "7.3".
+function formatKm(meters: number): string {
+  return String(Number((meters / 1000).toFixed(1)));
+}
+
 function alarmContent(kind: AlarmKind, journey: Journey): { title: string; body: string } {
   switch (kind) {
     case 'arrival':
-      return { title: "You've arrived", body: `You're within ${journey.radiusM}m of ${journey.name}` };
+      return { title: "You've arrived", body: `You're within ${formatKm(journey.radiusM)} km of ${journey.name}` };
     case 'gpsLoss':
       return {
         title: 'Lost GPS signal',

@@ -74,6 +74,14 @@ beforeEach(() => {
   (getJourneyById as jest.Mock).mockResolvedValue(journey);
 });
 
+test("M1: an arrival alarm says \"You've arrived near <destination>\" (spec §5.7)", async () => {
+  const navigation = alarmOnTopOfTracking('arrival');
+  const { findByText } = render(
+    <AlarmScreen route={{ params: { journeyId: 7, kind: 'arrival' } } as any} navigation={navigation as any} />
+  );
+  expect(await findByText("You've arrived near Station", {}, { timeout: 20000 })).toBeTruthy();
+});
+
 test('dismissing an arrival alarm cancels the notification, completes the journey, prunes fixes, stops tracking, and goes to Journeys', async () => {
   const navigation = alarmOnTopOfTracking('arrival');
   const { getByText, findByText } = render(
