@@ -36,6 +36,12 @@
       "expo-asset",
       "expo-font",
       "./plugins/withAlarmActivity"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c90c40e9-a62a-43a0-a829-136a84b05a0f"
+      }
+    },
+    "owner": "ie.santhosh.m"
   }
 }
