@@ -10,6 +10,7 @@ import { getDefaultSettings } from '../db/settingsRepo';
 import { createJourney, ActiveJourneyExistsError, getActiveJourney, finishJourney } from '../db/journeysRepo';
 import { DefaultSettings } from '../types/journey';
 import { SliderWithCustomInput } from '../components/SliderWithCustomInput';
+import { DestinationPickerModal } from '../components/DestinationPickerModal';
 import { haversineDistanceM } from '../geo/haversine';
 import { clampRadiusToCap, maxAllowedRadiusM } from '../geo/radiusCap';
 import { reconcileMinMaxFreq } from '../geo/pollFreqOrdering';
@@ -97,6 +98,10 @@ export function NewJourneyScreen({ navigation }: Props) {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedPlaceName, setSelectedPlaceName] = useState<string | null>(null);
   const [userLat, setUserLat] = useState<number | null>(null);
+  // While a finger is on the inline map, the form must not scroll: Android's
+  // ScrollView otherwise steals map pans and pinches after a few pixels.
+  const [mapTouched, setMapTouched] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [userLng, setUserLng] = useState<number | null>(null);
   const [radiusM, setRadiusM] = useState(0);
   const [maxFreq, setMaxFreq] = useState(0);
@@ -224,7 +229,10 @@ export function NewJourneyScreen({ navigation }: Props) {
     setSearching(true);
     setSearchError(null);
     try {
-      const results = await searchDestination(query, MAPBOX_ACCESS_TOKEN);
+      const results = await searchDestination(query, MAPBOX_ACCESS_TOKEN, {
+        lat: knownUserLat,
+        lng: knownUserLng,
+      });
       setSearchResults(results.slice(0, 5));
       if (results.length === 0) {
         setSearchError('No places found.');
@@ -352,7 +360,7 @@ export function NewJourneyScreen({ navigation }: Props) {
   const tokenConfigured = isMapboxTokenConfigured();
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} scrollEnabled={!mapTouched}>
       {activeJourneyBlocked && (
         <Text style={styles.errorText}>
           Only one journey can be active at a time. Finish or cancel your current journey first.
@@ -401,24 +409,51 @@ export function NewJourneyScreen({ navigation }: Props) {
         </View>
       )}
 
-      <Mapbox.MapView
-        style={styles.map}
-        styleURL={MAP_STYLE_URL}
-        onPress={(e: any) => {
-          const [lng, lat] = e.geometry.coordinates as [number, number];
-          handleDestinationChange(lat, lng);
-        }}
+      <View
+        style={styles.mapContainer}
+        testID="inlineMapContainer"
+        onTouchStart={() => setMapTouched(true)}
+        onTouchEnd={() => setMapTouched(false)}
+        onTouchCancel={() => setMapTouched(false)}
       >
-        <Mapbox.Camera
-          centerCoordinate={destination ? [destination.lng, destination.lat] : [knownUserLng, knownUserLat]}
-          zoomLevel={10}
-        />
-        {destination && (
-          <Mapbox.PointAnnotation id="destination" coordinate={[destination.lng, destination.lat]}>
-            <View style={styles.pin} />
-          </Mapbox.PointAnnotation>
-        )}
-      </Mapbox.MapView>
+        <Mapbox.MapView
+          style={styles.map}
+          styleURL={MAP_STYLE_URL}
+          onPress={(e: any) => {
+            const [lng, lat] = e.geometry.coordinates as [number, number];
+            handleDestinationChange(lat, lng);
+          }}
+        >
+          <Mapbox.Camera
+            centerCoordinate={destination ? [destination.lng, destination.lat] : [knownUserLng, knownUserLat]}
+            zoomLevel={10}
+          />
+          {destination && (
+            <Mapbox.PointAnnotation id="destination" coordinate={[destination.lng, destination.lat]}>
+              <View style={styles.pin} />
+            </Mapbox.PointAnnotation>
+          )}
+        </Mapbox.MapView>
+        <Pressable
+          style={styles.expandButton}
+          onPress={() => setPickerOpen(true)}
+          testID="expandMapButton"
+          accessibilityLabel="Open full-screen map to choose destination"
+        >
+          <Text style={styles.expandButtonText}>⤢</Text>
+        </Pressable>
+      </View>
+
+      <DestinationPickerModal
+        visible={pickerOpen}
+        userPosition={{ lat: knownUserLat, lng: knownUserLng }}
+        destination={destination}
+        onConfirm={(lat, lng) => {
+          handleDestinationChange(lat, lng);
+          setPickerOpen(false);
+        }}
+        onCancel={() => setPickerOpen(false)}
+      />
 
       <View style={styles.coordRow}>
         <TextInput
@@ -501,7 +536,18 @@ const styles = StyleSheet.create({
   resultsList: { marginBottom: 12 },
   resultItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#374151' },
   resultText: { color: '#e5e7eb' },
-  map: { height: 220, borderRadius: 10, marginBottom: 12 },
+  mapContainer: { marginBottom: 12 },
+  map: { height: 220, borderRadius: 10 },
+  expandButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(17, 24, 39, 0.85)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  expandButtonText: { color: '#fff', fontSize: 18 },
   pin: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#ef4444', borderWidth: 2, borderColor: '#fff' },
   coordRow: { flexDirection: 'row', gap: 10 },
   coordInput: { flex: 1 },

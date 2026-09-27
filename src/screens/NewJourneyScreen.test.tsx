@@ -1,4 +1,5 @@
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 import * as Location from 'expo-location';
 import * as Battery from 'expo-battery';
 import { NewJourneyScreen } from './NewJourneyScreen';
@@ -23,6 +24,7 @@ jest.mock('@rnmapbox/maps', () => ({
   MapView: 'MapboxMapView',
   Camera: 'MapboxCamera',
   PointAnnotation: 'MapboxPointAnnotation',
+  UserLocation: 'MapboxUserLocation',
 }));
 jest.mock('../location/geocode');
 jest.mock('../location/offlineMapCache');
@@ -307,7 +309,12 @@ test('searching for a destination moves the pin to the first result and lists it
   fireEvent.changeText(getByPlaceholderText('e.g. Heathrow Terminal 5'), 'Heathrow');
   fireEvent.press(getByText('Go'));
 
-  await waitFor(() => expect(searchDestination).toHaveBeenCalledWith('Heathrow', expect.any(String)));
+  await waitFor(() =>
+    expect(searchDestination).toHaveBeenCalledWith('Heathrow', expect.any(String), {
+      lat: MOCK_USER_COORDS.latitude,
+      lng: MOCK_USER_COORDS.longitude,
+    })
+  );
   expect(await findByDisplayValue('51.47')).toBeTruthy();
   await waitFor(() => expect(getAllByText('Heathrow Terminal 5').length).toBeGreaterThanOrEqual(1));
 });
@@ -533,4 +540,57 @@ test('M8: the Alarm Tune field says custom tunes are coming soon and the default
   const { findByText } = render(<NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />);
   await findByText('Start Journey', {}, { timeout: 20000 });
   expect(await findByText('Custom tunes coming soon — the default alarm sound is used.')).toBeTruthy();
+});
+
+test('touching the map locks the form scroll so map gestures pan the map instead of the page', async () => {
+  const { findByText, getByTestId, UNSAFE_getByType } = render(
+    <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+  );
+  await findByText('Start Journey', {}, { timeout: 20000 });
+
+  expect(UNSAFE_getByType(ScrollView).props.scrollEnabled).toBe(true);
+  fireEvent(getByTestId('inlineMapContainer'), 'touchStart');
+  expect(UNSAFE_getByType(ScrollView).props.scrollEnabled).toBe(false);
+  fireEvent(getByTestId('inlineMapContainer'), 'touchEnd');
+  expect(UNSAFE_getByType(ScrollView).props.scrollEnabled).toBe(true);
+
+  fireEvent(getByTestId('inlineMapContainer'), 'touchStart');
+  fireEvent(getByTestId('inlineMapContainer'), 'touchCancel');
+  expect(UNSAFE_getByType(ScrollView).props.scrollEnabled).toBe(true);
+});
+
+test('the expand button opens a full-screen picker; tapping the map and confirming sets the destination', async () => {
+  const { findByText, getByTestId, getByText, queryByTestId, findByDisplayValue } = render(
+    <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+  );
+  await findByText('Start Journey', {}, { timeout: 20000 });
+
+  expect(queryByTestId('destinationPickerMap')).toBeNull();
+  fireEvent.press(getByTestId('expandMapButton'));
+  expect(getByTestId('destinationPickerMap')).toBeTruthy();
+  // Confirming before a point is chosen does nothing: the picker stays open.
+  fireEvent.press(getByText('Use this destination'));
+  expect(getByTestId('destinationPickerMap')).toBeTruthy();
+
+  fireEvent(getByTestId('destinationPickerMap'), 'press', { geometry: { coordinates: [-6.3923, 53.3527] } });
+  fireEvent.press(getByText('Use this destination'));
+
+  expect(await findByDisplayValue('53.3527')).toBeTruthy();
+  expect(await findByDisplayValue('-6.3923')).toBeTruthy();
+  await waitFor(() => expect(queryByTestId('destinationPickerMap')).toBeNull());
+});
+
+test('cancelling the full-screen picker keeps the previous destination', async () => {
+  const { findByText, getByTestId, getByText, queryByTestId } = render(
+    <NewJourneyScreen navigation={{ replace: jest.fn() } as any} route={{} as any} />
+  );
+  await findByText('Start Journey', {}, { timeout: 20000 });
+  const latBefore = getByTestId('destLatInput').props.value;
+
+  fireEvent.press(getByTestId('expandMapButton'));
+  fireEvent(getByTestId('destinationPickerMap'), 'press', { geometry: { coordinates: [-6.3923, 53.3527] } });
+  fireEvent.press(getByText('Cancel'));
+
+  await waitFor(() => expect(queryByTestId('destinationPickerMap')).toBeNull());
+  expect(getByTestId('destLatInput').props.value).toBe(latBefore);
 });
