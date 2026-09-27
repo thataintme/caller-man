@@ -75,13 +75,85 @@ test('shows a warning banner when an optional permission is denied', async () =>
 });
 
 test('renders full-screen alarm and DND bypass as Check in Settings rows without a switch', () => {
-  const { getByText, getAllByText, UNSAFE_getAllByType } = render(
+  const { getByText, getAllByText, UNSAFE_queryAllByType } = render(
     <WelcomeScreen navigation={navigation} route={{} as any} />
   );
 
   expect(getByText('Full-screen Alarm')).toBeTruthy();
   expect(getAllByText('Check in Settings')).toHaveLength(2);
-  expect(UNSAFE_getAllByType(Switch)).toHaveLength(4);
+  expect(UNSAFE_queryAllByType(Switch)).toHaveLength(0);
+});
+
+test('shows a pending spinner for each permission until it is granted, then a check mark', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
+
+  const { getByText, getByTestId, queryByTestId } = render(
+    <WelcomeScreen navigation={navigation} route={{} as any} />
+  );
+
+  for (const key of ['gps', 'background', 'toggleGps', 'notifications']) {
+    expect(getByTestId(`permission-pending-${key}`)).toBeTruthy();
+    expect(queryByTestId(`permission-granted-${key}`)).toBeNull();
+  }
+
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(getByTestId('permission-granted-gps')).toBeTruthy(), { timeout: 5000 });
+  expect(getByTestId('permission-granted-toggleGps')).toBeTruthy();
+  expect(getByTestId('permission-granted-notifications')).toBeTruthy();
+  expect(getByTestId('permission-pending-background')).toBeTruthy();
+  expect(queryByTestId('permission-granted-background')).toBeNull();
+});
+
+test('asks for "Allow all the time" when location was granted only while using the app', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
+
+  const { getByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(getByText(/only while using the app/i)).toBeTruthy(), { timeout: 5000 });
+  expect(getByText(/Allow all the time/)).toBeTruthy();
+  expect(getByText('Open Settings')).toBeTruthy();
+});
+
+test('does not show the "while using the app" message when location was denied outright', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
+
+  const { getByText, queryByText } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+
+  await waitFor(() => expect(getByText('Open Settings')).toBeTruthy(), { timeout: 5000 });
+  expect(queryByText(/only while using the app/i)).toBeNull();
+});
+
+test('updates the indicators on app resume even when background location is still missing', async () => {
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+  (notifee.requestPermission as jest.Mock).mockResolvedValue({ authorizationStatus: 1 });
+  (Location.getForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
+  (Location.getBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+
+  const { getByText, getByTestId } = render(<WelcomeScreen navigation={navigation} route={{} as any} />);
+  fireEvent.press(getByText('Grant All Permissions to Continue'));
+  await waitFor(() => expect(getByText('Open Settings')).toBeTruthy(), { timeout: 5000 });
+
+  await act(async () => {
+    appStateHandler('active');
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await waitFor(() => expect(getByTestId('permission-granted-gps')).toBeTruthy(), { timeout: 5000 });
+  expect(getByTestId('permission-pending-background')).toBeTruthy();
+  expect(getByText(/only while using the app/i)).toBeTruthy();
+  expect(navigation.replace).not.toHaveBeenCalled();
 });
 
 test('re-checks location permissions on app resume and navigates once both are granted', async () => {

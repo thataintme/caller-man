@@ -1,5 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Switch, Pressable, StyleSheet, ScrollView, AppState, Linking } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  ScrollView,
+  AppState,
+  Linking,
+  ActivityIndicator,
+} from 'react-native';
 import * as Location from 'expo-location';
 import notifee from '@notifee/react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -8,7 +17,7 @@ import { RootStackParamList } from '../navigation/types';
 type Props = NativeStackScreenProps<RootStackParamList, 'Welcome'>;
 
 /**
- * Permissions with a real, requestable OS boolean we can show as a Switch.
+ * Permissions with a real, requestable OS boolean we can show as a status indicator.
  * `gps` and `background` are hard requirements (spec §5.1) — see `locationBlocked`
  * below for what happens when they're denied. `notifications` is the only optional
  * item here that has a genuine granted/denied signal we can act on.
@@ -57,6 +66,9 @@ export function WelcomeScreen({ navigation }: Props) {
   // Android 11+ often can't grant "Allow all the time" from the in-app dialog, so a
   // denial here isn't necessarily final — offer a way to Settings and keep checking.
   const locationBlocked = hasRequested && (!granted.gps || !granted.background);
+  // Foreground granted without background means the user picked "Allow only while
+  // using the app" — the easy mistake, so name the right option explicitly.
+  const onlyWhileUsingApp = locationBlocked && granted.gps && !granted.background;
   const optionalDenied = hasRequested ? OPTIONAL_SWITCH_KEYS.filter((key) => !granted[key]) : [];
 
   // Single choke point for navigating to Journeys: the request path and the
@@ -85,9 +97,11 @@ export function WelcomeScreen({ navigation }: Props) {
         if (!mountedRef.current) return;
         const bg = await Location.getBackgroundPermissionsAsync();
         if (!mountedRef.current) return;
+        // Reflect partial changes too (e.g. "while using the app" picked in
+        // Settings), so the indicators and the prompt stay accurate.
+        setGranted((g) => ({ ...g, gps: fg.granted, background: bg.granted, toggleGps: fg.granted }));
+        setHasRequested(true);
         if (fg.granted && bg.granted) {
-          setGranted((g) => ({ ...g, gps: true, background: true, toggleGps: true }));
-          setHasRequested(true);
           navigateOnce();
         }
       } catch {
@@ -156,17 +170,40 @@ export function WelcomeScreen({ navigation }: Props) {
             <Text style={styles.rowLabel}>{item.label}</Text>
             <Text style={styles.rationale}>{item.rationale}</Text>
           </View>
-          <Switch value={granted[item.key]} disabled />
+          {granted[item.key] ? (
+            <Text
+              testID={`permission-granted-${item.key}`}
+              accessibilityLabel={`${item.label} granted`}
+              style={styles.checkMark}
+            >
+              ✓
+            </Text>
+          ) : (
+            <ActivityIndicator
+              testID={`permission-pending-${item.key}`}
+              accessibilityLabel={`${item.label} not granted yet`}
+              size="small"
+              color="#9ca3af"
+            />
+          )}
         </View>
       ))}
 
       {locationBlocked && (
         <View style={styles.settingsPrompt}>
-          <Text style={styles.rationale}>
-            Your Android version may not let you grant "Allow all the time" from this dialog. Open
-            Settings and enable GPS location access there instead — we'll continue automatically
-            once it's granted.
-          </Text>
+          {onlyWhileUsingApp ? (
+            <Text style={styles.promptWarning}>
+              Location is set to "Allow only while using the app". Caller Man needs "Allow all the
+              time" to track you and wake you up while your screen is off. Tap Open Settings, go to
+              Permissions → Location, and choose "Allow all the time" — we'll continue automatically.
+            </Text>
+          ) : (
+            <Text style={styles.rationale}>
+              Your Android version may not let you grant "Allow all the time" from this dialog. Open
+              Settings and enable GPS location access there instead — we'll continue automatically
+              once it's granted.
+            </Text>
+          )}
           <Pressable
             style={styles.settingsButton}
             onPress={() => {
@@ -251,6 +288,8 @@ const styles = StyleSheet.create({
   rowTextWrap: { flex: 1 },
   rowLabel: { color: '#e5e7eb' },
   rationale: { color: '#9ca3af', fontSize: 12, marginTop: 2 },
+  checkMark: { color: '#10b981', fontSize: 20, fontWeight: '700', width: 20, textAlign: 'center' },
+  promptWarning: { color: '#fbbf24', fontSize: 13 },
   settingsPrompt: {
     backgroundColor: '#1f2937',
     borderRadius: 10,
